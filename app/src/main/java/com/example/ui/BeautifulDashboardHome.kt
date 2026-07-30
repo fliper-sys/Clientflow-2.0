@@ -55,6 +55,8 @@ fun BeautifulDashboardHome(
     val personalEntries by viewModel.personalEntriesState.collectAsStateWithLifecycle()
     val patients by viewModel.patientsState.collectAsStateWithLifecycle()
     val clinicalSessions by viewModel.clinicalSessionsState.collectAsStateWithLifecycle()
+    val scheduledItems by viewModel.scheduledItemsState.collectAsStateWithLifecycle()
+    val settings by viewModel.settingsState.collectAsStateWithLifecycle()
 
     var showGiftClaimsSuccess by remember { mutableStateOf(false) }
     var streakClaimedCount by rememberSaveable { mutableStateOf(7) }
@@ -83,24 +85,11 @@ fun BeautifulDashboardHome(
     var isTasksEnabled by remember { mutableStateOf(true) }
 
     // Live custom items
-    val customGratitudes = remember { mutableStateListOf("The quiet morning sunshine", "Hot organic herbal green tea") }
-    val customGoodDeeds = remember { mutableStateMapOf<String, Boolean>().apply {
-        put("Watered the mental health room plants", true)
-        put("Smiled warmly at a stranger in the street", false)
-        put("Helped a team member with their slides", false)
-    }}
+    val customGratitudes = remember { mutableStateListOf<String>() }
+    val customGoodDeeds = remember { mutableStateMapOf<String, Boolean>() }
 
-    // Preset static clinical alerts
-    val nextUpcomingPatient = patients.sortedBy { it.id }.firstOrNull() ?: Patient(
-        id = "PAT-CODE-84",
-        name = "John Doe",
-        email = "john.doe@hospital.org",
-        phone = "+1 (555) 489-0291",
-        diagnosis = "Adjustment Disorder with Anxiety",
-        therapeuticPhase = "Active Intervention",
-        homeworkName = "Cognitive distortions tracker worksheet",
-        homeworkProgress = 0.5f
-    )
+    // Next upcoming patient from real caseload
+    val nextUpcomingPatient = patients.sortedBy { it.id }.firstOrNull()
 
     LazyColumn(
         modifier = Modifier
@@ -197,6 +186,34 @@ fun BeautifulDashboardHome(
                     }
                 }
             }
+        }
+
+        // Clinician Caseload Dashboard Section (Primary for Practitioner Mode)
+        if (activeMode != "Personal") {
+            item {
+                ClinicianCaseloadDashboard(
+                    viewModel = viewModel,
+                    patients = patients,
+                    clinicalSessions = clinicalSessions,
+                    scheduledItems = scheduledItems,
+                    maskClientNames = settings?.maskClientNames ?: false,
+                    onNavigateToPatientDetail = { patientId ->
+                        onNavigate("patient_detail/$patientId")
+                    },
+                    onLogSession = { patientId ->
+                        onNavigate("log_session/$patientId")
+                    }
+                )
+            }
+        }
+
+        // Schedules & Push Notifications Section
+        item {
+            SchedulesAndNotificationsSection(
+                viewModel = viewModel,
+                scheduledItems = scheduledItems,
+                syncedEmail = settings?.syncedUserEmail
+            )
         }
 
         // 2. WEEKLY MOOD CALENDAR STRIP (With Dynamic check-in faces and animated custom cartoon googly eyes)
@@ -399,73 +416,110 @@ fun BeautifulDashboardHome(
         // 3. SPECIAL PRACTITIONER: UPCOMING SESSION ALERTS
         if (activeMode == "Practitioner") {
             item {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable {
-                            // Direct clinical flow click-through
-                            viewModel.selectPatient(nextUpcomingPatient.id)
-                            onNavigate("Primary") // Go to caseload (it will load the details!)
-                            Toast.makeText(context, "Opening direct file panel for client ${nextUpcomingPatient.name}", Toast.LENGTH_SHORT).show()
+                if (nextUpcomingPatient != null) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                // Direct clinical flow click-through
+                                viewModel.selectPatient(nextUpcomingPatient.id)
+                                onNavigate("Primary") // Go to caseload (it will load the details!)
+                                Toast.makeText(context, "Opening direct file panel for client ${nextUpcomingPatient.name}", Toast.LENGTH_SHORT).show()
+                            }
+                            .testTag("practitioner_alert_card"),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFFBE9E7)),
+                        border = BorderStroke(1.5.dp, Color(0xFFFFCCBC)),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.NotificationsActive,
+                                    contentDescription = "Active alert symbol",
+                                    tint = Color(0xFFD84315),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    "UPCOMING CLINICAL SESSION ALERT",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFD84315)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Text(
+                                text = "Next Client: ${nextUpcomingPatient.name}",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp,
+                                color = Color.Black
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Diagnostic focus: ${nextUpcomingPatient.diagnosis}\nPhase status: ${nextUpcomingPatient.therapeuticPhase}",
+                                fontSize = 12.sp,
+                                color = Color.DarkGray
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    "AI Prep Brief compilation ready • CBT homework tracker enabled",
+                                    fontSize = 10.sp,
+                                    fontStyle = FontStyle.Italic,
+                                    color = Color.Gray,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    "Open File ➔",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFD84315)
+                                )
+                            }
                         }
-                        .testTag("practitioner_alert_card"),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFBE9E7)),
-                    border = BorderStroke(1.5.dp, Color(0xFFFFCCBC)),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    }
+                } else {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onNavigate("Primary") }
+                            .testTag("practitioner_alert_card"),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
                         Row(
+                            modifier = Modifier.padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.NotificationsActive,
-                                contentDescription = "Active alert symbol",
-                                tint = Color(0xFFD84315),
-                                modifier = Modifier.size(20.dp)
+                                imageVector = Icons.Rounded.PersonAdd,
+                                contentDescription = "Add client",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
                             )
-                            Text(
-                                "UPCOMING CLINICAL SESSION ALERT",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                color = Color(0xFFD84315)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = "In 15 minutes: ${nextUpcomingPatient.name}",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp,
-                            color = Color.Black
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "Diagnostic focus: ${nextUpcomingPatient.diagnosis}\nPhase status: ${nextUpcomingPatient.therapeuticPhase}",
-                            fontSize = 12.sp,
-                            color = Color.DarkGray
-                        )
-
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                "AI Prep Brief compilation ready • CBT homework tracker enabled",
-                                fontSize = 10.sp,
-                                fontStyle = FontStyle.Italic,
-                                color = Color.Gray,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                "Open File ➔",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 11.sp,
-                                color = Color(0xFFD84315)
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Clinical Caseload Empty",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    "Tap to view your caseload manager and register your first client.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
@@ -1438,115 +1492,11 @@ fun BeautifulDashboardHome(
     // Modal view for wellness strip check-ins drilldown
     val detailsEntry = activeReflectDetailsModal
     if (detailsEntry != null) {
-        Dialog(onDismissRequest = { activeReflectDetailsModal = null }) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(20.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-                    .testTag("wellness_checkin_day_modal")
-            ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    val formattedDate = SimpleDateFormat("EEEE, MMMM dd, yyyy", Locale.getDefault()).format(Date(detailsEntry.dateMillis))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Wellness Check-in",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        IconButton(
-                            onClick = { activeReflectDetailsModal = null },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Rounded.Close, contentDescription = "Close modal", modifier = Modifier.size(18.dp))
-                        }
-                    }
-
-                    Divider()
-
-                    Text(
-                        text = formattedDate,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        color = Color.DarkGray
-                    )
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .background(
-                                    when (detailsEntry.mood) {
-                                        "Happy" -> HappyAura
-                                        "Productive" -> ProductiveAura
-                                        "Calm" -> CalmAura
-                                        "Reflective" -> ReflectiveAura
-                                        "Anxious" -> AnxiousAura
-                                        "Overwhelmed" -> OverwhelmedAura
-                                        else -> NeutralAura
-                                    }, CircleShape
-                                )
-                        )
-                        Text(
-                            text = "Daily Aura Mood: ${detailsEntry.mood}",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-
-                    Text(
-                        text = "Sleep Quality Rating: ${detailsEntry.sleepQuality}/10",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color.Gray
-                    )
-
-                    if (detailsEntry.oneSentenceNote.isNotEmpty()) {
-                        Text(
-                            text = "Morning Focus Summary:\n\"${detailsEntry.oneSentenceNote}\"",
-                            fontSize = 12.sp,
-                            fontStyle = FontStyle.Italic,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            lineHeight = 15.sp
-                        )
-                    }
-
-                    if (detailsEntry.freeWriteText.isNotEmpty()) {
-                        Text(
-                            text = "Chronicle Log Details:\n${detailsEntry.freeWriteText}",
-                            fontSize = 11.sp,
-                            color = Color.Gray,
-                            lineHeight = 14.sp
-                        )
-                    }
-
-                    Button(
-                        onClick = { activeReflectDetailsModal = null },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier.fillMaxWidth().height(36.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("Dismiss Log", fontSize = 11.sp)
-                    }
-                }
-            }
-        }
+        JournalEntryDetailDialog(
+            entry = detailsEntry,
+            viewModel = viewModel,
+            onDismiss = { activeReflectDetailsModal = null }
+        )
     }
 
     // 1. CONSTRUCTOR DIALOG

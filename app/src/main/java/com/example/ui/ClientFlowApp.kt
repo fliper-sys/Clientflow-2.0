@@ -51,6 +51,7 @@ import com.example.data.ClinicalSessionLog
 import com.example.data.Patient
 import com.example.data.PersonalJournalEntry
 import com.example.data.GeminiHelper
+import com.example.ui.security.*
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import com.example.ui.theme.*
@@ -84,7 +85,8 @@ fun ClientFlowApp(viewModel: ClientFlowViewModel) {
 
     MyApplicationTheme(
         selectedTheme = settings?.selectedTheme ?: "Natural Tones",
-        selectedAccent = settings?.selectedAccent ?: "Sage"
+        selectedAccent = settings?.selectedAccent ?: "Sage",
+        darkTheme = settings?.isDarkMode ?: isSystemInDarkTheme()
     ) {
         Box(
             modifier = Modifier
@@ -107,7 +109,7 @@ fun ClientFlowApp(viewModel: ClientFlowViewModel) {
                 // If not selection set, show Onboarding and Login / Sign-up Secure Profile Setup
                 ModeOnboardingContainer(
                     syncedUserEmail = settings?.syncedUserEmail,
-                    onRegisterLogin = { email -> viewModel.registerLoginUser(email) },
+                    onRegisterLogin = { email, isSignUp, pass -> viewModel.registerLoginUser(email, isSignUp, pass) },
                     currentSelectedMode = settings?.selectedMode,
                     onModeSelected = { viewModel.updateSelectedMode(it) },
                     onFinishOnboarding = { viewModel.completeOnboarding() }
@@ -156,6 +158,20 @@ fun ClientFlowApp(viewModel: ClientFlowViewModel) {
                                         )
                                         Text("PANIC", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                     }
+                                }
+
+                                // Global Theme Light/Dark Mode Quick Toggle Button
+                                IconButton(
+                                    onClick = {
+                                        viewModel.toggleDarkMode(!(settings?.isDarkMode ?: false))
+                                    },
+                                    modifier = Modifier.testTag("global_theme_toggle_button")
+                                ) {
+                                    Icon(
+                                        imageVector = if (settings?.isDarkMode == true) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
+                                        contentDescription = "Toggle Light/Dark Mode",
+                                        tint = if (settings?.isDarkMode == true) Color(0xFFFFD54F) else MaterialTheme.colorScheme.onSurface
+                                    )
                                 }
 
                                 // Dev/Test Quick actions
@@ -391,6 +407,47 @@ fun ClientFlowApp(viewModel: ClientFlowViewModel) {
                                         }
                                     }
                                 }
+
+                                // Dark Mode Switch Row
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (settings?.isDarkMode == true) Icons.Rounded.DarkMode else Icons.Rounded.LightMode,
+                                            contentDescription = "Dark Mode Toggle",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Column {
+                                            Text(
+                                                "Dark Mode Reading Comfort",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Text(
+                                                "Low-light contrast for clinical & journaling views",
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    Switch(
+                                        checked = settings?.isDarkMode ?: false,
+                                        onCheckedChange = { viewModel.toggleDarkMode(it) },
+                                        modifier = Modifier.testTag("dark_mode_switch")
+                                    )
+                                }
                             }
 
                             // 2. 10 Accent Color Customizer
@@ -494,6 +551,11 @@ fun ClientFlowApp(viewModel: ClientFlowViewModel) {
                                     )
                                 }
                             }
+
+                            Divider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                            // 3b. Biometric Recognition & Fingerprint/Face Security
+                            BiometricSettingsCard(viewModel = viewModel)
 
                             Divider(color = MaterialTheme.colorScheme.outlineVariant)
 
@@ -1083,7 +1145,7 @@ fun ClientFlowBrandLogoHeader(
 @Composable
 fun ModeOnboardingContainer(
     syncedUserEmail: String?,
-    onRegisterLogin: (String) -> Unit,
+    onRegisterLogin: (String, Boolean, String) -> Unit,
     currentSelectedMode: String?,
     onModeSelected: (String) -> Unit,
     onFinishOnboarding: () -> Unit
@@ -1288,7 +1350,7 @@ fun ModeOnboardingContainer(
                                     } else if (passwordInput != confirmPasswordInput) {
                                         authError = "Passwords do not match."
                                     } else {
-                                        onRegisterLogin(emailInput)
+                                        onRegisterLogin(emailInput, true, passwordInput)
                                     }
                                 },
                                 modifier = Modifier
@@ -1401,7 +1463,7 @@ fun ModeOnboardingContainer(
                                     } else if (passwordInput.isEmpty()) {
                                         authError = "Password cannot be empty."
                                     } else {
-                                        onRegisterLogin(emailInput)
+                                        onRegisterLogin(emailInput, false, passwordInput)
                                     }
                                 },
                                 modifier = Modifier
@@ -2190,6 +2252,23 @@ data class EasyPalette(
 @Composable
 fun PersonalJournalFeedView(viewModel: ClientFlowViewModel) {
     val entries by viewModel.personalEntriesState.collectAsStateWithLifecycle()
+    val settings by viewModel.settingsState.collectAsStateWithLifecycle()
+    val isJournalUnlocked by viewModel.isJournalUnlocked.collectAsStateWithLifecycle()
+
+    if (settings?.journalBiometricLocked == true && !isJournalUnlocked) {
+        BiometricLockOverlay(
+            title = "Personal Journal Locked",
+            description = "Biometric protection is active. Authenticate with fingerprint, face recognition, or PIN to access your personal journal entries.",
+            onUnlockBiometric = { activity, onSuccess, onError ->
+                viewModel.unlockJournalWithBiometrics(activity, onSuccess, onError)
+            },
+            onUnlockPin = { pin ->
+                viewModel.unlockJournalWithPin(pin)
+            }
+        )
+        return
+    }
+
     val scope = rememberCoroutineScope()
 
     // Screen States
@@ -2268,6 +2347,9 @@ fun PersonalJournalFeedView(viewModel: ClientFlowViewModel) {
 
     // Interactive switch for direct mic transcription vs AI assistant
     var transcriptionMode by remember { mutableStateOf("Mic") } // "Mic" or "AI Voice"
+    var autoSaveAndSummarize by remember { mutableStateOf(true) }
+    var lastAiGeneratedSummary by remember { mutableStateOf("") }
+    var isGeneratingAutoSummary by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -2341,6 +2423,22 @@ fun PersonalJournalFeedView(viewModel: ClientFlowViewModel) {
                             freeWriteInput += "\n$resultText"
                         }
                         Toast.makeText(localContext, "Transcribed: $resultText", Toast.LENGTH_SHORT).show()
+
+                        if (autoSaveAndSummarize && resultText.isNotBlank()) {
+                            isGeneratingAutoSummary = true
+                            viewModel.addSpokenJournalEntryAndSummarize(
+                                mood = currentMoodSelected,
+                                oneSentenceNote = if (contextNoteInput.isBlank()) "Spoken voice reflection" else contextNoteInput,
+                                transcribedText = resultText,
+                                sleepQuality = sleepRating.toInt(),
+                                tags = if (tagStringInput.isBlank()) "#spoken, #voice_journal" else tagStringInput,
+                                generateAiSummaryImmediately = true
+                            ) { entry, summary ->
+                                isGeneratingAutoSummary = false
+                                lastAiGeneratedSummary = summary
+                                Toast.makeText(localContext, "Spoken entry saved & AI summary generated!", Toast.LENGTH_LONG).show()
+                            }
+                        }
                     }
                     isRealSpeechRecognizerWorking = false
                     isRecordingAudio = false
@@ -2409,12 +2507,81 @@ fun PersonalJournalFeedView(viewModel: ClientFlowViewModel) {
         }
     }
 
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
+    var activeJournalTab by remember { mutableStateOf("Feed") }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Mode Selector Bar (Write Entry vs Feed vs Media Gallery)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Button(
+                onClick = { activeJournalTab = "Write" },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (activeJournalTab == "Write") SageGreen else Color.Transparent,
+                    contentColor = if (activeJournalTab == "Write") Color.White else MaterialTheme.colorScheme.onSurface
+                ),
+                shape = RoundedCornerShape(8.dp),
+                elevation = null
+            ) {
+                Icon(Icons.Rounded.EditNote, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Write Entry", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+
+            Button(
+                onClick = { activeJournalTab = "Feed" },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (activeJournalTab == "Feed") SageGreen else Color.Transparent,
+                    contentColor = if (activeJournalTab == "Feed") Color.White else MaterialTheme.colorScheme.onSurface
+                ),
+                shape = RoundedCornerShape(8.dp),
+                elevation = null
+            ) {
+                Icon(Icons.Rounded.Article, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Daily Feed", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+
+            Button(
+                onClick = { activeJournalTab = "Media Gallery" },
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (activeJournalTab == "Media Gallery") SageGreen else Color.Transparent,
+                    contentColor = if (activeJournalTab == "Media Gallery") Color.White else MaterialTheme.colorScheme.onSurface
+                ),
+                shape = RoundedCornerShape(8.dp),
+                elevation = null
+            ) {
+                Icon(Icons.Rounded.Collections, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Gallery", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+
+        if (activeJournalTab == "Write") {
+            FirestoreJournalComposerScreen(
+                viewModel = viewModel,
+                onEntrySaved = { activeJournalTab = "Feed" }
+            )
+        } else if (activeJournalTab == "Media Gallery") {
+            JournalMediaGalleryView(
+                viewModel = viewModel,
+                onOpenEntry = { selectedViewEntry = it }
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
         // Hero Onboarding Welcome Banner
         item {
             Card(
@@ -2761,6 +2928,42 @@ fun PersonalJournalFeedView(viewModel: ClientFlowViewModel) {
                                 }
                             }
 
+                            // Auto AI Summary Toggle Switch Row
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(SageGreen.copy(alpha = 0.08f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = "AI Summary toggle",
+                                        tint = SageGreen,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        "Auto-Save & Generate AI Summary",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                                Switch(
+                                    checked = autoSaveAndSummarize,
+                                    onCheckedChange = { autoSaveAndSummarize = it },
+                                    modifier = Modifier.scale(0.7f).testTag("auto_summary_toggle"),
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = SageGreen
+                                    )
+                                )
+                            }
+
                             Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
                             // Functional body layout
@@ -2905,6 +3108,22 @@ fun PersonalJournalFeedView(viewModel: ClientFlowViewModel) {
                                             freeWriteInput += (if (freeWriteInput.isEmpty()) "" else "\n") + transcription
                                             isTranscribingText = false
                                             recordedSubjectLine = ""
+
+                                            if (autoSaveAndSummarize && transcription.isNotBlank()) {
+                                                isGeneratingAutoSummary = true
+                                                viewModel.addSpokenJournalEntryAndSummarize(
+                                                    mood = currentMoodSelected,
+                                                    oneSentenceNote = if (contextNoteInput.isBlank()) "Spoken voice reflection" else contextNoteInput,
+                                                    transcribedText = transcription,
+                                                    sleepQuality = sleepRating.toInt(),
+                                                    tags = if (tagStringInput.isBlank()) "#spoken, #voice_journal" else tagStringInput,
+                                                    generateAiSummaryImmediately = true
+                                                ) { entry, summary ->
+                                                    isGeneratingAutoSummary = false
+                                                    lastAiGeneratedSummary = summary
+                                                    Toast.makeText(localContext, "Spoken entry saved & AI summary generated!", Toast.LENGTH_LONG).show()
+                                                }
+                                            }
                                         }
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = SageGreen),
@@ -2913,7 +3132,80 @@ fun PersonalJournalFeedView(viewModel: ClientFlowViewModel) {
                                         .height(36.dp)
                                         .testTag("transcribe_recording_action")
                                 ) {
-                                    Text("Stop & Transcribe Spoken Record", fontSize = 11.sp)
+                                    Text("Stop, Transcribe & Auto-Summarize Spoken Record", fontSize = 11.sp)
+                                }
+                            }
+
+                            // AI Summary Indicator or Loading State
+                            if (isGeneratingAutoSummary) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(SageGreen.copy(alpha = 0.12f))
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        color = SageGreen,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        "Generating instant AI summary for spoken journal entry...",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = SageGreen
+                                    )
+                                }
+                            } else if (lastAiGeneratedSummary.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("ai_spoken_summary_card"),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, SageGreen),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(10.dp)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = Icons.Default.AutoAwesome,
+                                                    contentDescription = "AI Summary Badge",
+                                                    tint = SageGreen,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    "AI-Generated Reflection Summary",
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 11.sp,
+                                                    color = SageGreen
+                                                )
+                                            }
+                                            Text(
+                                                "Saved to Journal",
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = Color.Gray
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = lastAiGeneratedSummary,
+                                            fontSize = 11.sp,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -3856,586 +4148,17 @@ fun PersonalJournalFeedView(viewModel: ClientFlowViewModel) {
             }
         }
     }
+}
 
     // Detailed entry view overlay Dialog
     if (selectedViewEntry != null) {
-        val entry = selectedViewEntry!!
-        
-        // E-Reader preferences (initialized from selected card palette)
-        var readerPaperThemeName by remember { mutableStateOf(selectedPaletteName) }
-        val paperThemes = remember {
-            listOf(
-                EasyPalette("Warm Ivory", Color(0xFFFDFBF7), Color(0xFFFFF9E6), Color(0xFF3E2723), Color(0xFF8D6E63)),
-                EasyPalette("Calm Mist", Color(0xFFF1F8E9), Color(0xFFE8F5E9), Color(0xFF1B5E20), Color(0xFF4CAF50)),
-                EasyPalette("Ocean Air", Color(0xFFE0F7FA), Color(0xFFE0F7FA), Color(0xFF006064), Color(0xFF00ACC1)),
-                EasyPalette("Soft Lavender", Color(0xFFFAF5FF), Color(0xFFEDE7F6), Color(0xFF4A148C), Color(0xFF7E57C2)),
-                EasyPalette("Velvet Dark", Color(0xFF151821), Color(0xFF222633), Color(0xFFECEFF1), Color(0xFF9FA8DA)),
-                EasyPalette("Pastel Cherry", Color(0xFFFFF5F5), Color(0xFFFCE4EC), Color(0xFF880E4F), Color(0xFFEC407A))
-            )
-        }
-        val activePaper = paperThemes.find { it.name == readerPaperThemeName } ?: paperThemes.first()
-
-        val activeFontFamily = when (readerFontFamilySelection) {
-            "Serif" -> FontFamily.Serif
-            "Sans-Serif" -> FontFamily.SansSerif
-            "Monospace" -> FontFamily.Monospace
-            "Cursive" -> FontFamily.Cursive
-            else -> FontFamily.Serif
-        }
-
-        // Audio simulation state
-        var isPlayingSource by remember { mutableStateOf(false) }
-        var secondsElapsed by remember { mutableStateOf(14) }
-        val durationSeconds = 124 // 2m 04s
-        var lastAudioProgress by remember { mutableStateOf(0.11f) }
-
-        LaunchedEffect(isPlayingSource) {
-            if (isPlayingSource) {
-                while (isPlayingSource) {
-                    delay(1000)
-                    if (secondsElapsed < durationSeconds) {
-                        secondsElapsed++
-                        lastAudioProgress = secondsElapsed.toFloat() / durationSeconds.toFloat()
-                    } else {
-                        isPlayingSource = false
-                        secondsElapsed = 0
-                        lastAudioProgress = 0f
-                    }
-                }
-            }
-        }
-
-        Dialog(onDismissRequest = { selectedViewEntry = null }) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 12.dp)
-                    .heightIn(max = 640.dp)
-                    .testTag("ereader_custom_page"),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = activePaper.background),
-                border = BorderStroke(1.5.dp, activePaper.accent.copy(alpha = 0.4f)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 16.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(18.dp)
-                ) {
-                    // UPPER TOOLBAR: Dismiss and Title
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.FilterVintage,
-                                contentDescription = null,
-                                tint = activePaper.accent,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                "E-Reader Sanctuary",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = activePaper.text
-                            )
-                        }
-                        IconButton(
-                            onClick = { selectedViewEntry = null },
-                            modifier = Modifier
-                                .background(activePaper.accent.copy(alpha = 0.1f), CircleShape)
-                                .size(28.dp)
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "Close", tint = activePaper.text, modifier = Modifier.size(16.dp))
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // 1. DYNAMIC CONTROLS BENCH (Font Size, Family, & Palette Paper selector)
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = activePaper.cardBg),
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                        border = BorderStroke(1.dp, activePaper.accent.copy(alpha = 0.2f))
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            // Row A: Font Family & Font Size Increaser
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                // Font selector buttons
-                                Row(
-                                    modifier = Modifier
-                                        .background(activePaper.background.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
-                                        .padding(2.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                                ) {
-                                    listOf("Serif", "Sans", "Mono", "Diary").forEach { fontLabel ->
-                                        val mFont = when (fontLabel) {
-                                            "Serif" -> "Serif"
-                                            "Sans" -> "Sans-Serif"
-                                            "Mono" -> "Monospace"
-                                            else -> "Cursive"
-                                        }
-                                        val isSelectedFont = readerFontFamilySelection == mFont
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(if (isSelectedFont) activePaper.accent else Color.Transparent)
-                                                .clickable { readerFontFamilySelection = mFont }
-                                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                        ) {
-                                            Text(
-                                                text = fontLabel,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (isSelectedFont) activePaper.background else activePaper.text.copy(alpha = 0.7f)
-                                            )
-                                        }
-                                    }
-                                }
-
-                                // Font size scale trigger
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    IconButton(
-                                        onClick = { if (readerFontSize > 12f) readerFontSize -= 2f },
-                                        modifier = Modifier
-                                            .background(activePaper.background.copy(alpha = 0.5f), CircleShape)
-                                            .size(24.dp)
-                                    ) {
-                                        Text("-", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = activePaper.text)
-                                    }
-
-                                    Text(
-                                        text = "${readerFontSize.toInt()}sp",
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = activePaper.text
-                                    )
-
-                                    IconButton(
-                                        onClick = { if (readerFontSize < 28f) readerFontSize += 2f },
-                                        modifier = Modifier
-                                            .background(activePaper.background.copy(alpha = 0.5f), CircleShape)
-                                            .size(24.dp)
-                                    ) {
-                                        Text("+", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = activePaper.text)
-                                    }
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            // Row B: Active reading paper palettes selection circles
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text("Paper Coloroso:", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = activePaper.text.copy(alpha = 0.6f))
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    paperThemes.forEach { t ->
-                                        val isChosen = readerPaperThemeName == t.name
-                                        Box(
-                                            modifier = Modifier
-                                                .size(20.dp)
-                                                .clip(CircleShape)
-                                                .background(t.background)
-                                                .border(
-                                                    width = if (isChosen) 2.dp else 1.dp,
-                                                    color = if (isChosen) activePaper.accent else Color.LightGray.copy(alpha = 0.5f),
-                                                    shape = CircleShape
-                                                )
-                                                .clickable { readerPaperThemeName = t.name }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // 2. SCROLLABLE CUSTOM PAPER CONTENT BOARD
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        // Title/Metadata Block
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.Bottom
-                        ) {
-                            Column {
-                                val formattedLocal = SimpleDateFormat("EEEE, MMMM dd, yyyy", Locale.getDefault()).format(entry.dateMillis)
-                                Text(
-                                    text = formattedLocal.uppercase(),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    letterSpacing = 1.sp,
-                                    color = activePaper.accent
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    val moodColor = when (entry.mood) {
-                                        "Happy" -> HappyAura
-                                        "Productive" -> ProductiveAura
-                                        "Calm" -> CalmAura
-                                        "Reflective" -> ReflectiveAura
-                                        "Neutral" -> NeutralAura
-                                        "Anxious" -> AnxiousAura
-                                        "Overwhelmed" -> OverwhelmedAura
-                                        else -> NeutralAura
-                                    }
-                                    Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(moodColor))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "Mind state Aura: ${entry.mood}",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = activePaper.text
-                                    )
-                                }
-                            }
-
-                            // Sleep index badge
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = activePaper.accent.copy(alpha = 0.15f)),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text(
-                                    text = "💤 Rest Score: ${entry.sleepQuality}/10",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = activePaper.text,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
-                        }
-
-                        // Trigger context quote if present
-                        if (entry.oneSentenceNote.isNotEmpty()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(activePaper.accent.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
-                                    .padding(12.dp)
-                            ) {
-                                Column {
-                                    Text(
-                                        "ANCHORED TRIGGER SOURCE:",
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = activePaper.accent,
-                                        letterSpacing = 0.5.sp
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = "\"${entry.oneSentenceNote}\"",
-                                        fontSize = 13.sp,
-                                        fontStyle = FontStyle.Italic,
-                                        fontFamily = FontFamily.Serif,
-                                        fontWeight = FontWeight.Medium,
-                                        color = activePaper.text
-                                    )
-                                }
-                            }
-                        }
-
-                        // THE FREE WRITE MARKDOWN TEXT SHEET with customized font family and scale
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = activePaper.cardBg),
-                            shape = RoundedCornerShape(16.dp),
-                            border = BorderStroke(1.dp, activePaper.accent.copy(alpha = 0.1f))
-                        ) {
-                            Text(
-                                text = if (entry.freeWriteText.isEmpty()) "[The written reflection is blank]" else entry.freeWriteText,
-                                style = TextStyle(
-                                    fontFamily = activeFontFamily,
-                                    fontSize = readerFontSize.sp,
-                                    lineHeight = (readerFontSize * 1.35f).sp,
-                                    color = activePaper.text,
-                                    textAlign = TextAlign.Justify
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp)
-                            )
-                        }
-
-                        // Associated Hashtags
-                        if (entry.tags.isNotEmpty()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.Bookmark, contentDescription = null, tint = activePaper.accent, modifier = Modifier.size(12.dp))
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    entry.tags.split(",").forEach { tag ->
-                                        val clean = tag.trim()
-                                        if (clean.isNotEmpty()) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .background(activePaper.accent.copy(alpha = 0.15f), RoundedCornerShape(6.dp))
-                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                                            ) {
-                                                Text(clean, fontSize = 10.sp, color = activePaper.text, fontWeight = FontWeight.Bold)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // 3a. POLAROID-STYLE ATTACHED IMAGE VIEW
-                        if (entry.photoUri != null) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(activePaper.cardBg, RoundedCornerShape(16.dp))
-                                    .border(1.dp, activePaper.accent.copy(alpha = 0.15f), RoundedCornerShape(16.dp))
-                                    .padding(10.dp)
-                            ) {
-                                val isPr = entry.photoUri.startsWith("preset_")
-                                if (isPr) {
-                                    val gradient = when (entry.photoUri) {
-                                        "preset_forest_walk" -> Brush.horizontalGradient(listOf(SageGreen, Color(0xFF2E7D32)))
-                                        "preset_calm_ocean" -> Brush.horizontalGradient(listOf(Color(0xFF0288D1), Color(0xFF00ACC1)))
-                                        else -> Brush.horizontalGradient(listOf(SageGreen, TealPrimary))
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(140.dp)
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(gradient),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                            Icon(Icons.Default.Image, contentDescription = "Preset asset icon", tint = Color.White, modifier = Modifier.size(36.dp))
-                                            Spacer(modifier = Modifier.height(4.dp))
-                                            Text(
-                                                text = "PORTRAIT: " + entry.photoUri.removePrefix("preset_").replace("_", " ").uppercase(),
-                                                color = Color.White,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 11.sp
-                                            )
-                                        }
-                                    }
-                                } else {
-                                    Card(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(180.dp),
-                                        shape = RoundedCornerShape(10.dp)
-                                    ) {
-                                        AsyncImage(
-                                            model = entry.photoUri,
-                                            contentDescription = "User attached photo snapshot",
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
-                                        )
-                                    }
-                                }
-                                
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = "📓 DIGITAL SNAPSHOT POLAROID FRAME • COZY VIEW",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = activePaper.text.copy(alpha = 0.5f),
-                                    textAlign = TextAlign.Center,
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                            }
-                        }
-
-                        // 3b. BEAUTIFUL MULTIMEDIA AUDIO PLAYER BLOCK
-                        if (entry.audioFilePath != null) {
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = activePaper.cardBg),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .border(1.5.dp, activePaper.accent.copy(alpha = 0.3f), RoundedCornerShape(16.dp)),
-                                shape = RoundedCornerShape(16.dp)
-                            ) {
-                                Column(modifier = Modifier.padding(14.dp)) {
-                                    // Title descriptor
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column {
-                                            val displayName = if (entry.audioFilePath.startsWith("preset_")) {
-                                                "Vocal Core: ${entry.audioFilePath.removePrefix("preset_").replace("_", " ")}"
-                                            } else {
-                                                "Spoken reflection chronicle"
-                                            }
-                                            Text(
-                                                text = displayName,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = activePaper.text
-                                            )
-                                            Text(
-                                                text = if (isPlayingSource) "Playing audio chronicle..." else "Narration track loaded",
-                                                fontSize = 10.sp,
-                                                color = activePaper.text.copy(alpha = 0.6f)
-                                            )
-                                        }
-                                        Icon(
-                                            imageVector = Icons.Default.Audiotrack,
-                                            contentDescription = null,
-                                            tint = activePaper.accent,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-
-                                    Spacer(modifier = Modifier.height(12.dp))
-
-                                    // MATHEMATICAL CANVAS EQUALIZER WAVEFORM DRAWN BEAUTIFULLY
-                                    Canvas(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(36.dp)
-                                            .background(activePaper.background.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                                            .padding(horizontal = 6.dp)
-                                    ) {
-                                        val waveWidth = size.width
-                                        val waveHeight = size.height
-                                        val barCount = 36
-                                        val gap = 4.dp.toPx()
-                                        val availableWidth = waveWidth - (barCount - 1) * gap
-                                        val barWidth = availableWidth / barCount
-                                        
-                                        for (idx in 0 until barCount) {
-                                            // Make wave undulating if playing
-                                            val phaseValue = if (isPlayingSource) (secondsElapsed * 3) else 0
-                                            val waveAmplitude = Math.sin((idx + phaseValue) * 0.35).coerceAtLeast(0.12) * 0.75 + 
-                                                                Math.cos(idx * 0.8).coerceAtLeast(0.0) * 0.25
-                                            val activeHeight = (waveAmplitude * waveHeight).toFloat().coerceIn(4f, waveHeight - 4f)
-                                            
-                                            val xPos = idx * (barWidth + gap)
-                                            val yPos = (waveHeight - activeHeight) / 2f
-                                            
-                                            val progressRatio = idx.toFloat() / barCount.toFloat()
-                                            val barColor = if (progressRatio <= lastAudioProgress) activePaper.accent else activePaper.text.copy(alpha = 0.15f)
-                                            
-                                            drawRoundRect(
-                                                color = barColor,
-                                                topLeft = androidx.compose.ui.geometry.Offset(xPos, yPos),
-                                                size = androidx.compose.ui.geometry.Size(barWidth, activeHeight),
-                                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(1.5f.dp.toPx())
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(10.dp))
-
-                                    // Timeline Slider
-                                    Slider(
-                                        value = lastAudioProgress,
-                                        onValueChange = {
-                                            lastAudioProgress = it
-                                            secondsElapsed = (it * durationSeconds).toInt()
-                                        },
-                                        colors = SliderDefaults.colors(
-                                            thumbColor = activePaper.accent,
-                                            activeTrackColor = activePaper.accent,
-                                            inactiveTrackColor = activePaper.text.copy(alpha = 0.12f)
-                                        ),
-                                        modifier = Modifier.fillMaxWidth()
-                                    )
-
-                                    // Timer Counter labels
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        val elapsedStr = String.format("%02d:%02d", secondsElapsed / 60, secondsElapsed % 60)
-                                        val remainingSeconds = (durationSeconds - secondsElapsed).coerceAtLeast(0)
-                                        val remainStr = String.format("-%02d:%02d", remainingSeconds / 60, remainingSeconds % 60)
-                                        
-                                        Text(elapsedStr, fontSize = 9.sp, color = activePaper.text.copy(alpha = 0.5f))
-                                        Text(remainStr, fontSize = 9.sp, color = activePaper.text.copy(alpha = 0.5f))
-                                    }
-
-                                    Spacer(modifier = Modifier.height(10.dp))
-
-                                    // Controllable Deck buttons (Skip-Backwards, Play/Pause, Skip-Forwards)
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.Center,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        IconButton(
-                                            onClick = {
-                                                secondsElapsed = (secondsElapsed - 15).coerceAtLeast(0)
-                                                lastAudioProgress = secondsElapsed.toFloat() / durationSeconds.toFloat()
-                                            },
-                                            modifier = Modifier.size(36.dp)
-                                        ) {
-                                            Icon(Icons.Default.Replay10, contentDescription = "Rewind 10 seconds", tint = activePaper.text)
-                                        }
-
-                                        Spacer(modifier = Modifier.width(16.dp))
-
-                                        IconButton(
-                                            onClick = { isPlayingSource = !isPlayingSource },
-                                            modifier = Modifier
-                                                .background(activePaper.accent, CircleShape)
-                                                .size(44.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = if (isPlayingSource) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                                contentDescription = "Toggle reproduction",
-                                                tint = activePaper.background,
-                                                modifier = Modifier.size(24.dp)
-                                            )
-                                        }
-
-                                        Spacer(modifier = Modifier.width(16.dp))
-
-                                        IconButton(
-                                            onClick = {
-                                                secondsElapsed = (secondsElapsed + 15).coerceAtMost(durationSeconds)
-                                                lastAudioProgress = secondsElapsed.toFloat() / durationSeconds.toFloat()
-                                            },
-                                            modifier = Modifier.size(36.dp)
-                                        ) {
-                                            Icon(Icons.Default.Forward10, contentDescription = "Forward 10 seconds", tint = activePaper.text)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        JournalEntryDetailDialog(
+            entry = selectedViewEntry!!,
+            viewModel = viewModel,
+            onDismiss = { selectedViewEntry = null }
+        )
     }
+}
 }
 
 data class MoodSelectOption(
@@ -5099,6 +4822,21 @@ fun PractitionerCaseloadView(viewModel: ClientFlowViewModel) {
     val rawSessions by viewModel.clinicalSessionsState.collectAsStateWithLifecycle()
     val selectedPatientId by viewModel.currentPatientId.collectAsStateWithLifecycle()
     val settings by viewModel.settingsState.collectAsStateWithLifecycle()
+    val isClientDataUnlocked by viewModel.isClientDataUnlocked.collectAsStateWithLifecycle()
+
+    if (settings?.clientDataBiometricLocked == true && !isClientDataUnlocked) {
+        BiometricLockOverlay(
+            title = "Client Records & Caseload Locked",
+            description = "Biometric protection is active. Verify identity with fingerprint, face recognition, or PIN to view clinical caseload records.",
+            onUnlockBiometric = { activity, onSuccess, onError ->
+                viewModel.unlockClientDataWithBiometrics(activity, onSuccess, onError)
+            },
+            onUnlockPin = { pin ->
+                viewModel.unlockClientDataWithPin(pin)
+            }
+        )
+        return
+    }
 
     val currentSelectedPatient = patients.find { it.id == selectedPatientId }
 
@@ -5139,42 +4877,24 @@ fun PractitionerCaseloadView(viewModel: ClientFlowViewModel) {
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        "Inject rich client preloaded logs, homework indices, and historical consultation sessions, or wipe state parameters to test.",
+                        "Wipe or clear caseload data parameters to start with fresh real clinical records.",
                         fontSize = 11.sp,
                         color = Color.Gray
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
+                    Button(
+                        onClick = { viewModel.wipeClinicalSandbox() },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(38.dp)
+                            .testTag("sandbox_wipe_button")
                     ) {
-                        Button(
-                            onClick = { viewModel.loadClinicalSandboxDemo() },
-                            colors = ButtonDefaults.buttonColors(containerColor = TealPrimary),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(38.dp)
-                                .testTag("sandbox_seed_button")
-                        ) {
-                            Icon(Icons.Default.Upload, contentDescription = "Seed data", modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Seed Caseload", fontSize = 10.sp)
-                        }
-
-                        Button(
-                            onClick = { viewModel.wipeClinicalSandbox() },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(38.dp)
-                                .testTag("sandbox_wipe_button")
-                        ) {
-                            Icon(Icons.Default.Delete, contentDescription = "Clear data", modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Wipe Caseload", fontSize = 10.sp)
-                        }
+                        Icon(Icons.Default.Delete, contentDescription = "Clear data", modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Clear All Caseload Data", fontSize = 11.sp)
                     }
                 }
             }

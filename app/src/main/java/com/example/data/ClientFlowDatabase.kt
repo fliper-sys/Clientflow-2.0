@@ -14,6 +14,9 @@ data class AppSettings(
     val onboardingCompleted: Boolean = false,
     val pinLockEnabled: Boolean = false,
     val pinCode: String = "",
+    val biometricLockEnabled: Boolean = false,
+    val journalBiometricLocked: Boolean = false,
+    val clientDataBiometricLocked: Boolean = false,
     val maskClientNames: Boolean = false,
     val obfuscateContacts: Boolean = false,
     val blurClinicalNotes: Boolean = false,
@@ -21,6 +24,7 @@ data class AppSettings(
     val lastAIResponseDate: Long = 0,
     val selectedTheme: String = "Natural Tones", // "Natural Tones", "Cosmic Slate", "Calm Lavender", "Sunset Warmth"
     val selectedAccent: String = "Sage", // "Mint", "Sage", "Ocean", "Indigo", "Lavender", "Rose", "Amber", "Terracotta", "Slate", "Gold"
+    val isDarkMode: Boolean = false,
     val cloudSyncEnabled: Boolean = false,
     val syncedUserEmail: String = ""
 )
@@ -37,8 +41,21 @@ data class PersonalJournalEntry(
     val sleepQuality: Int = 5, // 1 to 10
     val tags: String = "", // e.g. "#gratitude, #work"
     val photoUri: String? = null,
-    val isLocked: Boolean = false
+    val isLocked: Boolean = false,
+    val mediaUrisJson: String = "",
+    val aiSummary: String = ""
 ) {
+    val allMediaUris: List<String>
+        get() {
+            val list = mutableListOf<String>()
+            photoUri?.let { if (it.isNotBlank()) list.add(it) }
+            if (mediaUrisJson.isNotBlank()) {
+                val items = mediaUrisJson.split("|||").map { it.trim() }.filter { it.isNotEmpty() }
+                list.addAll(items)
+            }
+            return list.distinct()
+        }
+
     val moodWeight: Int
         get() = when (mood) {
             "Happy" -> 10
@@ -80,6 +97,18 @@ data class ClinicalSessionLog(
     val tags: String = "", // e.g. "CBT, ACT"
     val notes: String = "",
     val mediaAttachmentPath: String? = null
+)
+
+@Entity(tableName = "scheduled_items")
+data class ScheduledItem(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val title: String,
+    val description: String = "",
+    val scheduledTimeMillis: Long,
+    val reminderType: String = "Session", // "Session", "Reflection", "Homework", "Custom"
+    val patientId: String? = null,
+    val isCompleted: Boolean = false,
+    val notificationScheduled: Boolean = true
 )
 
 // ==========================================
@@ -158,6 +187,24 @@ interface ClinicalSessionLogDao {
     suspend fun clearAllSessions()
 }
 
+@Dao
+interface ScheduledItemDao {
+    @Query("SELECT * FROM scheduled_items ORDER BY scheduledTimeMillis ASC")
+    fun getAllSchedulesFlow(): Flow<List<ScheduledItem>>
+
+    @Query("SELECT * FROM scheduled_items ORDER BY scheduledTimeMillis ASC")
+    suspend fun getAllSchedules(): List<ScheduledItem>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSchedule(item: ScheduledItem): Long
+
+    @Query("UPDATE scheduled_items SET isCompleted = :completed WHERE id = :id")
+    suspend fun updateCompletion(id: Int, completed: Boolean)
+
+    @Query("DELETE FROM scheduled_items WHERE id = :id")
+    suspend fun deleteScheduleById(id: Int)
+}
+
 // ==========================================
 // 3. DATABASE
 // ==========================================
@@ -167,9 +214,10 @@ interface ClinicalSessionLogDao {
         AppSettings::class,
         PersonalJournalEntry::class,
         Patient::class,
-        ClinicalSessionLog::class
+        ClinicalSessionLog::class,
+        ScheduledItem::class
     ],
-    version = 2,
+    version = 6,
     exportSchema = false
 )
 abstract class ClientFlowDatabase : RoomDatabase() {
@@ -177,6 +225,7 @@ abstract class ClientFlowDatabase : RoomDatabase() {
     abstract fun personalJournalEntryDao(): PersonalJournalEntryDao
     abstract fun patientDao(): PatientDao
     abstract fun clinicalSessionLogDao(): ClinicalSessionLogDao
+    abstract fun scheduledItemDao(): ScheduledItemDao
 }
 
 // ==========================================
@@ -188,6 +237,7 @@ class ClientFlowRepository(private val db: ClientFlowDatabase) {
     val personalEntriesFlow: Flow<List<PersonalJournalEntry>> = db.personalJournalEntryDao().getAllEntriesFlow()
     val patientsFlow: Flow<List<Patient>> = db.patientDao().getAllPatientsFlow()
     val clinicalSessionsFlow: Flow<List<ClinicalSessionLog>> = db.clinicalSessionLogDao().getAllSessionsFlow()
+    val scheduledItemsFlow: Flow<List<ScheduledItem>> = db.scheduledItemDao().getAllSchedulesFlow()
 
     suspend fun getSettings(): AppSettings {
         return db.appSettingsDao().getSettings() ?: AppSettings().also {
@@ -230,6 +280,22 @@ class ClientFlowRepository(private val db: ClientFlowDatabase) {
 
     suspend fun deleteClinicalSessionById(id: Int) {
         db.clinicalSessionLogDao().deleteSessionById(id)
+    }
+
+    suspend fun insertScheduledItem(item: ScheduledItem): Long {
+        return db.scheduledItemDao().insertSchedule(item)
+    }
+
+    suspend fun getAllScheduledItems(): List<ScheduledItem> {
+        return db.scheduledItemDao().getAllSchedules()
+    }
+
+    suspend fun updateScheduleCompletion(id: Int, completed: Boolean) {
+        db.scheduledItemDao().updateCompletion(id, completed)
+    }
+
+    suspend fun deleteScheduleById(id: Int) {
+        db.scheduledItemDao().deleteScheduleById(id)
     }
 
     suspend fun clearClinicalSandbox() {

@@ -1,15 +1,30 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import com.example.data.*
+import com.example.notifications.NotificationSchedulerManager
+import com.example.security.BiometricAuthManager
+import com.example.security.BiometricStatus
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
 
 class ClientFlowViewModel(application: Application) : AndroidViewModel(application) {
+
+    val biometricAuthManager by lazy {
+        BiometricAuthManager(getApplication())
+    }
+
+    private val _isJournalUnlocked = MutableStateFlow(false)
+    val isJournalUnlocked: StateFlow<Boolean> = _isJournalUnlocked.asStateFlow()
+
+    private val _isClientDataUnlocked = MutableStateFlow(false)
+    val isClientDataUnlocked: StateFlow<Boolean> = _isClientDataUnlocked.asStateFlow()
 
     // Database and Repository Setup
     private val database: ClientFlowDatabase by lazy {
@@ -46,6 +61,12 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
     )
 
     val clinicalSessionsState = repository.clinicalSessionsFlow.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val scheduledItemsState = repository.scheduledItemsFlow.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
@@ -107,6 +128,114 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
         _isAppLocked.value = true
     }
 
+    // Biometric & Granular Data Security Functions
+    fun authenticateWithBiometrics(
+        activity: FragmentActivity,
+        title: String = "Biometric Verification",
+        subtitle: String = "Verify fingerprint or face recognition",
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        biometricAuthManager.authenticate(
+            activity = activity,
+            title = title,
+            subtitle = subtitle,
+            onSuccess = onSuccess,
+            onError = onError
+        )
+    }
+
+    fun unlockJournalWithBiometrics(
+        activity: FragmentActivity,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        biometricAuthManager.authenticate(
+            activity = activity,
+            title = "Unlock Private Journal",
+            subtitle = "Verify fingerprint or face recognition to view journal records",
+            onSuccess = {
+                _isJournalUnlocked.value = true
+                onSuccess()
+            },
+            onError = onError
+        )
+    }
+
+    fun unlockJournalWithPin(pin: String): Boolean {
+        val currentSettings = settingsState.value ?: return true
+        if (currentSettings.pinCode.isEmpty() || currentSettings.pinCode == pin) {
+            _isJournalUnlocked.value = true
+            return true
+        }
+        return false
+    }
+
+    fun relockJournal() {
+        _isJournalUnlocked.value = false
+    }
+
+    fun unlockClientDataWithBiometrics(
+        activity: FragmentActivity,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        biometricAuthManager.authenticate(
+            activity = activity,
+            title = "Unlock Client Records",
+            subtitle = "Verify identity to access sensitive clinical client records",
+            onSuccess = {
+                _isClientDataUnlocked.value = true
+                onSuccess()
+            },
+            onError = onError
+        )
+    }
+
+    fun unlockClientDataWithPin(pin: String): Boolean {
+        val currentSettings = settingsState.value ?: return true
+        if (currentSettings.pinCode.isEmpty() || currentSettings.pinCode == pin) {
+            _isClientDataUnlocked.value = true
+            return true
+        }
+        return false
+    }
+
+    fun relockClientData() {
+        _isClientDataUnlocked.value = false
+    }
+
+    fun toggleBiometricMasterLock(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(biometricLockEnabled = enabled) }
+            biometricAuthManager.setBiometricEnabled(enabled)
+        }
+    }
+
+    fun toggleJournalBiometricLock(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(journalBiometricLocked = enabled) }
+            biometricAuthManager.setJournalLocked(enabled)
+            if (!enabled) {
+                _isJournalUnlocked.value = true
+            } else {
+                _isJournalUnlocked.value = false
+            }
+        }
+    }
+
+    fun toggleClientDataBiometricLock(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings { it.copy(clientDataBiometricLocked = enabled) }
+            biometricAuthManager.setClientDataLocked(enabled)
+            if (!enabled) {
+                _isClientDataUnlocked.value = true
+            } else {
+                _isClientDataUnlocked.value = false
+            }
+        }
+    }
+
     fun activatePanicMode() {
         _panicModeActivated.value = true
     }
@@ -115,11 +244,103 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
         _panicModeActivated.value = false
     }
 
-    // Settings Modification
-    fun registerLoginUser(email: String) {
+    // Settings & Auth Modification
+    fun registerLoginUser(email: String, isSignUp: Boolean = false, passwordInput: String = "ClientFlowSecure2026!") {
         viewModelScope.launch {
-            repository.updateSettings { it.copy(syncedUserEmail = email) }
+            val result = FirestoreSyncManager.authenticateUser(email, isSignUp, passwordInput)
+            val authEmail = result.getOrDefault(email)
+            repository.updateSettings { it.copy(syncedUserEmail = authEmail, cloudSyncEnabled = true) }
+            triggerFirestoreSync()
         }
+    }
+
+    private val _isFirestoreSyncing = MutableStateFlow(false)
+    val isFirestoreSyncing: StateFlow<Boolean> = _isFirestoreSyncing.asStateFlow()
+
+    fun triggerFirestoreSync() {
+        viewModelScope.launch {
+            _isFirestoreSyncing.value = true
+            try {
+                val settings = settingsState.value ?: repository.getSettings()
+                val email = settings.syncedUserEmail
+                if (email.isNotBlank()) {
+                    // 1. Pull remote data from Firestore to sync entries created on other devices
+                    FirestoreSyncManager.fetchRemoteDataFromFirestore(
+                        email = email,
+                        repository = repository
+                    )
+
+                    // 2. Push local state to Firestore
+                    val entries = personalEntriesState.value
+                    val patients = patientsState.value
+                    val sessions = clinicalSessionsState.value
+                    val schedules = scheduledItemsState.value
+                    FirestoreSyncManager.syncAllUserDataToFirestore(
+                        email = email,
+                        settings = settings,
+                        entries = entries,
+                        patients = patients,
+                        sessions = sessions,
+                        schedules = schedules
+                    )
+                }
+            } finally {
+                _isFirestoreSyncing.value = false
+            }
+        }
+    }
+
+    // SCHEDULES & PUSH NOTIFICATION FUNCTIONS
+    fun addScheduledItem(
+        context: Context,
+        title: String,
+        description: String = "",
+        scheduledTimeMillis: Long,
+        reminderType: String = "Session",
+        patientId: String? = null
+    ) {
+        viewModelScope.launch {
+            val item = ScheduledItem(
+                title = title,
+                description = description,
+                scheduledTimeMillis = scheduledTimeMillis,
+                reminderType = reminderType,
+                patientId = patientId,
+                isCompleted = false,
+                notificationScheduled = true
+            )
+            val insertedId = repository.insertScheduledItem(item)
+            
+            // Schedule Push Notification via AlarmManager
+            NotificationSchedulerManager.scheduleNotification(
+                context = context,
+                notificationId = insertedId.toInt(),
+                title = title,
+                content = if (description.isNotBlank()) description else "Scheduled $reminderType reminder in ClientFlow.",
+                triggerAtMillis = scheduledTimeMillis
+            )
+
+            triggerFirestoreSync()
+        }
+    }
+
+    fun toggleScheduleCompletion(id: Int, completed: Boolean) {
+        viewModelScope.launch {
+            repository.updateScheduleCompletion(id, completed)
+            triggerFirestoreSync()
+        }
+    }
+
+    fun deleteSchedule(context: Context, id: Int) {
+        viewModelScope.launch {
+            repository.deleteScheduleById(id)
+            NotificationSchedulerManager.cancelNotification(context, id)
+            triggerFirestoreSync()
+        }
+    }
+
+    fun triggerInstantPushNotification(context: Context, title: String, content: String) {
+        NotificationSchedulerManager.triggerInstantTestNotification(context, title, content)
     }
 
     fun updateSelectedMode(mode: String) {
@@ -173,6 +394,14 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun toggleDarkMode(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.updateSettings {
+                it.copy(isDarkMode = enabled)
+            }
+        }
+    }
+
     fun updateAccentColor(accentName: String) {
         viewModelScope.launch {
             repository.updateSettings {
@@ -192,7 +421,12 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
     fun toggleMaskNames(enabled: Boolean) {
         viewModelScope.launch {
             repository.updateSettings { it.copy(maskClientNames = enabled) }
+            triggerFirestoreSync()
         }
+    }
+
+    fun updateMaskClientNames(enabled: Boolean) {
+        toggleMaskNames(enabled)
     }
 
     fun toggleBlurNotes(enabled: Boolean) {
@@ -217,7 +451,9 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
         audioFilePath: String? = null,
         transcribedText: String? = null,
         photoUri: String? = null,
-        isLocked: Boolean = false
+        isLocked: Boolean = false,
+        mediaUrisJson: String = "",
+        aiSummary: String = ""
     ) {
         viewModelScope.launch {
             val entry = PersonalJournalEntry(
@@ -229,15 +465,67 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
                 audioFilePath = audioFilePath,
                 transcribedText = transcribedText,
                 photoUri = photoUri,
-                isLocked = isLocked
+                isLocked = isLocked,
+                mediaUrisJson = mediaUrisJson,
+                aiSummary = aiSummary
             )
             repository.insertPersonalEntry(entry)
+            triggerFirestoreSync()
+        }
+    }
+
+    fun addSpokenJournalEntryAndSummarize(
+        mood: String,
+        oneSentenceNote: String,
+        transcribedText: String,
+        audioFilePath: String? = null,
+        sleepQuality: Int = 5,
+        tags: String = "#spoken, #voice_entry",
+        generateAiSummaryImmediately: Boolean = true,
+        onCompleted: ((PersonalJournalEntry, String) -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            val tempEntry = PersonalJournalEntry(
+                mood = mood,
+                oneSentenceNote = oneSentenceNote,
+                freeWriteText = transcribedText,
+                transcribedText = transcribedText,
+                audioFilePath = audioFilePath ?: "spoken_record_${System.currentTimeMillis()}.mp3",
+                sleepQuality = sleepQuality,
+                tags = tags
+            )
+            val summary = if (generateAiSummaryImmediately) {
+                GeminiHelper.generateSingleEntrySummary(tempEntry)
+            } else ""
+
+            val finalEntry = tempEntry.copy(aiSummary = summary)
+            repository.insertPersonalEntry(finalEntry)
+            triggerFirestoreSync()
+            onCompleted?.invoke(finalEntry, summary)
+        }
+    }
+
+    fun updateJournalEntry(entry: PersonalJournalEntry) {
+        viewModelScope.launch {
+            repository.insertPersonalEntry(entry)
+            triggerFirestoreSync()
+        }
+    }
+
+    fun generateSingleEntryAiSummary(entry: PersonalJournalEntry, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val summary = GeminiHelper.generateSingleEntrySummary(entry)
+            val updated = entry.copy(aiSummary = summary)
+            repository.insertPersonalEntry(updated)
+            triggerFirestoreSync()
+            onResult(summary)
         }
     }
 
     fun deleteJournalEntry(entry: PersonalJournalEntry) {
         viewModelScope.launch {
             repository.deletePersonalEntry(entry)
+            triggerFirestoreSync()
         }
     }
 
@@ -271,6 +559,13 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun addPatient(patient: Patient) {
+        viewModelScope.launch {
+            repository.insertPatient(patient)
+            triggerFirestoreSync()
+        }
+    }
+
     fun addPatient(
         name: String,
         email: String,
@@ -295,6 +590,14 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
                 isDecliningSleep = isDecliningSleep
             )
             repository.insertPatient(patient)
+            triggerFirestoreSync()
+        }
+    }
+
+    fun addClinicalSessionLog(session: ClinicalSessionLog) {
+        viewModelScope.launch {
+            repository.insertClinicalSession(session)
+            triggerFirestoreSync()
         }
     }
 
@@ -352,146 +655,9 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // DEV SANDBOX CONTROLS
+    // DEV DATA MANAGEMENT CONTROLS
     fun loadClinicalSandboxDemo() {
-        viewModelScope.launch {
-            // Clear current caseload
-            repository.clearClinicalSandbox()
-
-            // Pre-populate Patients
-            val p1 = Patient(
-                id = "PAT-SJE-9230",
-                name = "Sarah Jenkins",
-                email = "s.jenkins@gmail.com",
-                phone = "+1 650 382 9110",
-                diagnosis = "F43.22 Adjustment Disorder with Anxious Mood",
-                homeworkName = "3-column Cognitive Restructuring worksheet",
-                homeworkProgress = 0.80f,
-                therapeuticPhase = "Active Intervention",
-                isDecliningSleep = true,
-                createdAtMillis = System.currentTimeMillis() - 86400000 * 10
-            )
-
-            val p2 = Patient(
-                id = "PAT-MCH-4812",
-                name = "Michael Chen",
-                email = "m.chen@outlook.com",
-                phone = "+1 415 882 1092",
-                diagnosis = "F41.1 Generalized Anxiety Disorder",
-                homeworkName = "Daily diaphragmatic breathing loops (5 mins)",
-                homeworkProgress = 0.40f,
-                therapeuticPhase = "Assessment",
-                isDecliningSleep = false,
-                createdAtMillis = System.currentTimeMillis() - 86400000 * 5
-            )
-
-            val p3 = Patient(
-                id = "PAT-AAD-2917",
-                name = "Amara Adebayo",
-                email = "amara.a@yahoo.com",
-                phone = "+234 803 772 1923",
-                diagnosis = "F33.1 Major Depressive Disorder, Moderate",
-                homeworkName = "Behavioral Activation activity scheduling",
-                homeworkProgress = 0.95f,
-                therapeuticPhase = "Maintenance",
-                isDecliningSleep = false,
-                createdAtMillis = System.currentTimeMillis() - 86400000 * 15
-            )
-
-            repository.insertPatient(p1)
-            repository.insertPatient(p2)
-            repository.insertPatient(p3)
-
-            // Pre-populate clinical session logs for Sarah
-            repository.insertClinicalSession(ClinicalSessionLog(
-                patientId = p1.id,
-                dateMillis = System.currentTimeMillis() - 86400000 * 7,
-                durationMinutes = 50,
-                sessionMood = "Neutral",
-                objectiveObservations = "Client presents with mild anxious tension regarding career transition. Engaged well with CBT basics.",
-                homeworkCheck = "Completed CBT thoughts journal outline with help.",
-                energyScore = 6,
-                sleepScore = 7,
-                tags = "CBT, Adjustment, Career",
-                notes = "Encouraged active testing of worries. Client agreed to identify core automatic negative items.",
-                mediaAttachmentPath = "intake_worksheet.pdf"
-            ))
-
-            repository.insertClinicalSession(ClinicalSessionLog(
-                patientId = p1.id,
-                dateMillis = System.currentTimeMillis() - 86400000 * 2,
-                durationMinutes = 60,
-                sessionMood = "Difficult",
-                objectiveObservations = "Significant elevation in somatic anxiety triggers, sweating, and rapid speech described. Sleep disrupted.",
-                homeworkCheck = "Struggled to complete cognitive restructuring worksheet.",
-                energyScore = 4,
-                sleepScore = 3,
-                tags = "CBT, Somatic Anxiety",
-                notes = "Slow-paced diaphragmatic breathing practiced in-session. Focused on grounding through sensory awareness.",
-                mediaAttachmentPath = "somatic_diary.jpg"
-            ))
-
-            // Pre-populate clinical session logs for Amara
-            repository.insertClinicalSession(ClinicalSessionLog(
-                patientId = p3.id,
-                dateMillis = System.currentTimeMillis() - 86400000 * 12,
-                durationMinutes = 55,
-                sessionMood = "Positive",
-                objectiveObservations = "Marked improvement in mood stability and social engagement after starting behavioral homework.",
-                homeworkCheck = "Logged 6/7 days of scheduled activities.",
-                energyScore = 8,
-                sleepScore = 8,
-                tags = "MDD, Behavioral Activation",
-                notes = "Explored relapse markers. Patient reports active coping loops feel native now.",
-                mediaAttachmentPath = "activity_logs.xlsx"
-            ))
-
-            // Pre-populate mock personal journal data to make the Personal dashboard look beautiful when switching
-            val entry1 = PersonalJournalEntry(
-                dateMillis = System.currentTimeMillis() - 86400000 * 4,
-                mood = "Neutral",
-                oneSentenceNote = "Had a busy day completing assignments and checking up on family.",
-                freeWriteText = "Feeling balanced today, though slightly tired. Managed to keep up with my morning stretches.",
-                sleepQuality = 6,
-                tags = "#work, #gratitude",
-                isLocked = false
-            )
-
-            val entry2 = PersonalJournalEntry(
-                dateMillis = System.currentTimeMillis() - 86400000 * 2,
-                mood = "Calm",
-                oneSentenceNote = "Took a long walk in the evening and read my favorite book.",
-                freeWriteText = "Extremely peaceful afternoon. The walk really cleared my head. I feel connected and rested.",
-                sleepQuality = 8,
-                tags = "#relationships, #serene",
-                isLocked = false
-            )
-
-            val entry3 = PersonalJournalEntry(
-                dateMillis = System.currentTimeMillis() - 86400000 * 1,
-                mood = "Anxious",
-                oneSentenceNote = "Felt tense about the upcoming project milestone presentation tomorrow.",
-                freeWriteText = "Woke up with an elevated pulse. Hard to sit tranquil. Tried to focus on breathing techniques, but worry remains high.",
-                sleepQuality = 4,
-                tags = "#work, #triggers",
-                isLocked = false
-            )
-
-            val entry4 = PersonalJournalEntry(
-                dateMillis = System.currentTimeMillis(),
-                mood = "Productive",
-                oneSentenceNote = "Crushed the core milestones, built standard interfaces cleanly!",
-                freeWriteText = "Very successful day! Solved issues with great focus. Feeling very satisfied with the results.",
-                sleepQuality = 9,
-                tags = "#success",
-                isLocked = false
-            )
-
-            repository.insertPersonalEntry(entry1)
-            repository.insertPersonalEntry(entry2)
-            repository.insertPersonalEntry(entry3)
-            repository.insertPersonalEntry(entry4)
-        }
+        wipeClinicalSandbox()
     }
 
     fun wipeClinicalSandbox() {

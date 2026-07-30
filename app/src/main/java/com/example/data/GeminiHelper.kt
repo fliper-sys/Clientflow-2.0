@@ -171,6 +171,53 @@ object GeminiHelper {
         }
     }
 
+    /**
+     * Generates an AI summary and key reflection insights for a single selected journal entry.
+     */
+    suspend fun generateSingleEntrySummary(entry: PersonalJournalEntry): String = withContext(Dispatchers.IO) {
+        if (!isApiKeyAvailable()) {
+            return@withContext generateFallbackSingleEntrySummary(entry)
+        }
+
+        val formattedDate = java.text.SimpleDateFormat("EEEE, MMM dd, yyyy", java.util.Locale.getDefault()).format(entry.dateMillis)
+        val prompt = """
+            You are ClientFlow's Empathetic AI Reflection Assistant.
+            Analyze the following personal journal entry:
+            - Date: $formattedDate
+            - Mood: ${entry.mood}
+            - Sleep Quality: ${entry.sleepQuality}/10
+            - Reflection Note: ${entry.oneSentenceNote}
+            - Detailed Free-write: ${entry.freeWriteText}
+            - Transcribed Audio: ${entry.transcribedText ?: "None"}
+            - Tags: ${entry.tags}
+
+            Requirements:
+            1. Generate a concise, therapeutic 2-3 sentence summary of the emotional state and key insights.
+            2. Offer 1 gentle, empowering takeaway for self-care.
+            3. Keep the total response warm, compassionate, and under 80 words.
+        """.trimIndent()
+
+        try {
+            return@withContext callGeminiApi(prompt)
+        } catch (e: Exception) {
+            Log.e(TAG, "Gemini call for entry summary failed, using fallback", e)
+            return@withContext generateFallbackSingleEntrySummary(entry)
+        }
+    }
+
+    private fun generateFallbackSingleEntrySummary(entry: PersonalJournalEntry): String {
+        val moodInsight = when (entry.mood) {
+            "Productive" -> "You experienced clear mental flow and accomplishment."
+            "Calm" -> "You cultivated a serene, centered state of mind."
+            "Reflective" -> "You engaged in quiet introspection and self-awareness."
+            "Anxious" -> "You acknowledged elevated worry with openness and courage."
+            "Overwhelmed" -> "You recognized feeling stretched thin, an important signal to slow down."
+            else -> "You logged an honest check-in with your thoughts."
+        }
+        val sleepInsight = if (entry.sleepQuality >= 7) "Your rested sleep quality (${entry.sleepQuality}/10) provided strong support today." else "Rest was lower (${entry.sleepQuality}/10), suggesting extra self-compassion is beneficial."
+        return "$moodInsight $sleepInsight Processing these thoughts empowers your wellness journey."
+    }
+
     private fun generateFallbackDailyPrompt(entries: List<PersonalJournalEntry>): String {
         if (entries.isEmpty()) {
             return "How are you feeling as you start this journey today? What is one small expectation you'd like to release?"
