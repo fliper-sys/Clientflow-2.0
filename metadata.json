@@ -1,0 +1,6 @@
+{
+  "name": "ClientFlow",
+  "description": "Dual-mode wellness application for personal journaling and professional clinical therapy caseload management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
