@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.widget.Toast
 import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -19,9 +20,10 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import kotlinx.coroutines.delay
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -58,9 +60,22 @@ fun BeautifulDashboardHome(
     val scheduledItems by viewModel.scheduledItemsState.collectAsStateWithLifecycle()
     val settings by viewModel.settingsState.collectAsStateWithLifecycle()
 
+    val currentStreak = settings?.streakDays ?: 7
     var showGiftClaimsSuccess by remember { mutableStateOf(false) }
-    var streakClaimedCount by rememberSaveable { mutableStateOf(7) }
     var giftSurpriseClaimed by rememberSaveable { mutableStateOf(false) }
+    var streakParticleTrigger by remember { mutableIntStateOf(0) }
+
+    // Breathing flame pulse transition animation
+    val flameTransition = rememberInfiniteTransition(label = "home_flame_pulse")
+    val homeFlameScale by flameTransition.animateFloat(
+        initialValue = 0.93f,
+        targetValue = 1.10f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(850, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "homeFlameScale"
+    )
 
     // Interactivity state maps for checklists (remembers check states in runtime)
     val checkedPersonalTodos = remember { mutableStateMapOf<String, Boolean>() }
@@ -106,84 +121,95 @@ fun BeautifulDashboardHome(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (activeMode == "Personal") "Good Morning," else "Good Day, Dr. Madison",
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = if (activeMode == "Personal") "Ready for your morning check-in?" else "Ready to review recent journals & chronicles?",
-                            fontSize = 12.sp,
-                            color = Color.Gray
-                        )
-                    }
-
+                Box(modifier = Modifier.fillMaxWidth()) {
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Gift Surprise Box Claim
-                        IconButton(
-                            onClick = {
-                                if (!giftSurpriseClaimed) {
-                                    giftSurpriseClaimed = true
-                                    streakClaimedCount += 1
-                                    showGiftClaimsSuccess = true
-                                    Toast.makeText(context, "🎁 Daily surprise claimed! You received 50 healing points!", Toast.LENGTH_LONG).show()
-                                } else {
-                                    Toast.makeText(context, "🎁 Already checked in and claimed today's gift summary!", Toast.LENGTH_SHORT).show()
-                                }
-                            },
-                            modifier = Modifier
-                                .background(
-                                    color = if (giftSurpriseClaimed) Color.LightGray.copy(alpha = 0.4f) else Color(0xFFFFD54F),
-                                    shape = RoundedCornerShape(12.dp)
-                                )
-                                .size(40.dp)
-                                .testTag("home_gift_claim")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.CardGiftcard,
-                                contentDescription = "Daily gift box claim",
-                                tint = if (giftSurpriseClaimed) Color.DarkGray else Color.Black,
-                                modifier = Modifier.size(20.dp)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (activeMode == "Personal") "Good Morning," else "Good Day, Dr. Madison",
+                                fontSize = 20.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (activeMode == "Personal") "Ready for your morning check-in?" else "Ready to review recent journals & chronicles?",
+                                fontSize = 12.sp,
+                                color = Color.Gray
                             )
                         }
 
-                        // Flame streak tracker badge
                         Row(
-                            modifier = Modifier
-                                .background(Color(0xFFFFECB3), RoundedCornerShape(12.dp))
-                                .clickable {
-                                    Toast.makeText(context, "🔥 Solid $streakClaimedCount-day mindfulness streak! Keeping progress intact.", Toast.LENGTH_SHORT).show()
-                                }
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Whatshot,
-                                contentDescription = "Streak flame indicator",
-                                tint = Color(0xFFFF6D00),
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = streakClaimedCount.toString(),
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp,
-                                color = Color(0xFFD84315)
-                            )
+                            // Gift Surprise Box Claim
+                            IconButton(
+                                onClick = {
+                                    if (!giftSurpriseClaimed) {
+                                        giftSurpriseClaimed = true
+                                        viewModel.updateStreakProgress(currentStreak + 1)
+                                        showGiftClaimsSuccess = true
+                                        streakParticleTrigger++
+                                        Toast.makeText(context, "🎁 Daily surprise claimed! You received 50 healing points!", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        Toast.makeText(context, "🎁 Already checked in and claimed today's gift summary!", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .background(
+                                        color = if (giftSurpriseClaimed) Color.LightGray.copy(alpha = 0.4f) else Color(0xFFFFD54F),
+                                        shape = RoundedCornerShape(12.dp)
+                                    )
+                                    .size(40.dp)
+                                    .testTag("home_gift_claim")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.CardGiftcard,
+                                    contentDescription = "Daily gift box claim",
+                                    tint = if (giftSurpriseClaimed) Color.DarkGray else Color.Black,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            // Flame streak tracker badge with subtle pulse & celebration trigger
+                            Row(
+                                modifier = Modifier
+                                    .background(Color(0xFFFFECB3), RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        streakParticleTrigger++
+                                        Toast.makeText(context, "🔥 Solid $currentStreak-day mindfulness streak! Cached offline & synced with Firestore.", Toast.LENGTH_SHORT).show()
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Whatshot,
+                                    contentDescription = "Streak flame indicator",
+                                    tint = Color(0xFFFF6D00),
+                                    modifier = Modifier
+                                        .size(18.dp)
+                                        .scale(homeFlameScale)
+                                )
+                                Text(
+                                    text = currentStreak.toString(),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = Color(0xFFD84315)
+                                )
+                            }
                         }
                     }
+
+                    StreakMilestoneCelebrationEffect(
+                        triggerKey = streakParticleTrigger,
+                        modifier = Modifier.matchParentSize()
+                    )
                 }
             }
         }

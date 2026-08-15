@@ -84,61 +84,115 @@ fun FirestoreJournalEntriesListScreen(
             ),
             shape = RoundedCornerShape(20.dp)
         ) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.CloudSync,
-                            contentDescription = "Firestore Sync",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.CloudSync,
+                                contentDescription = "Firestore Sync",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "Firestore Journal Hub",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
                         Text(
-                            text = "Firestore Journal Hub",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                            color = MaterialTheme.colorScheme.onSurface
+                            text = if (syncedEmail.isNotBlank()) "Cloud Account: $syncedEmail" else "Synced across local database & Firestore",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Text(
-                        text = if (syncedEmail.isNotBlank()) "Cloud Account: $syncedEmail" else "Synced across local database & Firestore",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+
+                    IconButton(
+                        onClick = {
+                            viewModel.triggerFirestoreSync()
+                            Toast.makeText(context, "Fetching latest Firestore journal entries...", Toast.LENGTH_SHORT).show()
+                        },
+                        enabled = !isSyncing,
+                        modifier = Modifier
+                            .testTag("refresh_firestore_entries_button")
+                            .size(44.dp)
+                    ) {
+                        if (isSyncing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Rounded.Refresh,
+                                contentDescription = "Sync from Firestore",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                 }
 
-                IconButton(
-                    onClick = {
-                        viewModel.triggerFirestoreSync()
-                        Toast.makeText(context, "Fetching latest Firestore journal entries...", Toast.LENGTH_SHORT).show()
-                    },
-                    enabled = !isSyncing,
+                // Offline Persistence Status & Streak Summary Banner
+                Row(
                     modifier = Modifier
-                        .testTag("refresh_firestore_entries_button")
-                        .size(44.dp)
-                ) {
-                    if (isSyncing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.primary
+                        .fillMaxWidth()
+                        .background(
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+                            RoundedCornerShape(12.dp)
                         )
-                    } else {
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         Icon(
-                            imageVector = Icons.Rounded.Refresh,
-                            contentDescription = "Sync from Firestore",
-                            tint = MaterialTheme.colorScheme.primary
+                            imageVector = Icons.Rounded.OfflinePin,
+                            contentDescription = "Offline persistence enabled",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Offline Persistence Active",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Whatshot,
+                            contentDescription = "Streak count",
+                            tint = Color(0xFFFF6D00),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "${settings?.streakDays ?: 7}d streak cached",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFD84315)
                         )
                     }
                 }

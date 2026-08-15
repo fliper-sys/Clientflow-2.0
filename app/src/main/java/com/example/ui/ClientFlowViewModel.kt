@@ -95,6 +95,9 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
     val isGeneratingBrief: StateFlow<Boolean> = _isGeneratingBrief.asStateFlow()
 
     init {
+        // Initialize Firestore with offline persistence on ViewModel initialization
+        FirestoreSyncManager.initializeOfflinePersistence(application)
+
         // Evaluate initial app lock state based on settings
         viewModelScope.launch {
             settingsState.filterNotNull().collectFirst { settings ->
@@ -453,6 +456,19 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
     fun toggleObfuscateContacts(enabled: Boolean) {
         viewModelScope.launch {
             repository.updateSettings { it.copy(obfuscateContacts = enabled) }
+        }
+    }
+
+    fun updateStreakProgress(streakDays: Int, clinicianStreakDays: Int? = null) {
+        viewModelScope.launch {
+            repository.updateSettings { current ->
+                current.copy(
+                    streakDays = streakDays,
+                    clinicianStreakDays = clinicianStreakDays ?: current.clinicianStreakDays,
+                    lastStreakSyncMillis = System.currentTimeMillis()
+                )
+            }
+            triggerFirestoreSync()
         }
     }
 

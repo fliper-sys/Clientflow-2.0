@@ -26,7 +26,10 @@ data class AppSettings(
     val selectedAccent: String = "Sage", // "Mint", "Sage", "Ocean", "Indigo", "Lavender", "Rose", "Amber", "Terracotta", "Slate", "Gold"
     val isDarkMode: Boolean = false,
     val cloudSyncEnabled: Boolean = false,
-    val syncedUserEmail: String = ""
+    val syncedUserEmail: String = "",
+    val streakDays: Int = 7,
+    val clinicianStreakDays: Int = 1,
+    val lastStreakSyncMillis: Long = 0L
 )
 
 @Entity(tableName = "personal_journal_entries")
@@ -223,7 +226,7 @@ interface ScheduledItemDao {
         ClinicalSessionLog::class,
         ScheduledItem::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class ClientFlowDatabase : RoomDatabase() {

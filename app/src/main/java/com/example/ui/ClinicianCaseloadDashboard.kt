@@ -3,7 +3,9 @@ package com.example.ui
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,10 +22,16 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -36,6 +44,9 @@ import com.example.data.Patient
 import com.example.data.ScheduledItem
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.random.Random
 
 @Composable
 fun ClinicianCaseloadDashboard(
@@ -1197,7 +1208,7 @@ fun LogClinicalSessionDialog(
 }
 
 // ==========================================
-// CLINICIAN STREAK & MILESTONE COMPONENTS
+// CLINICIAN STREAK & MILESTONE COMPONENTS WITH CELEBRATION ANIMATIONS
 // ==========================================
 
 data class ClinicianMilestone(
@@ -1270,6 +1281,114 @@ fun calculateClinicianStreak(
     return maxOf(1, streak)
 }
 
+// Particle model for streak milestone celebration
+private data class ConfettiParticle(
+    val startX: Float,
+    val startY: Float,
+    val velocityX: Float,
+    val velocityY: Float,
+    val color: Color,
+    val size: Float,
+    val shapeType: Int, // 0 = circle, 1 = rectangle ribbon, 2 = star sparkle
+    val rotationSpeed: Float
+)
+
+@Composable
+fun StreakMilestoneCelebrationEffect(
+    triggerKey: Int,
+    modifier: Modifier = Modifier
+) {
+    val animationProgress = remember { Animatable(0f) }
+    val particles = remember(triggerKey) {
+        val random = Random(triggerKey + 42)
+        val palette = listOf(
+            Color(0xFFFFD700), // Gold
+            Color(0xFFFF6D00), // Deep Orange
+            Color(0xFFFFAB00), // Amber
+            Color(0xFF00E676), // Emerald
+            Color(0xFF7C4DFF), // Purple
+            Color(0xFFFF4081)  // Hot Pink
+        )
+        List(36) {
+            val angle = random.nextDouble(0.0, Math.PI * 2)
+            val speed = random.nextDouble(180.0, 520.0).toFloat()
+            ConfettiParticle(
+                startX = 0.5f,
+                startY = 0.45f,
+                velocityX = (cos(angle) * speed).toFloat(),
+                velocityY = (sin(angle) * speed - 120f).toFloat(),
+                color = palette[random.nextInt(palette.size)],
+                size = random.nextDouble(6.0, 14.0).toFloat(),
+                shapeType = random.nextInt(3),
+                rotationSpeed = random.nextDouble(-360.0, 360.0).toFloat()
+            )
+        }
+    }
+
+    LaunchedEffect(triggerKey) {
+        if (triggerKey > 0) {
+            animationProgress.snapTo(0f)
+            animationProgress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 1400, easing = FastOutSlowInEasing)
+            )
+        }
+    }
+
+    if (animationProgress.value > 0f && animationProgress.value < 1f) {
+        val t = animationProgress.value
+        val alpha = (1f - t).coerceIn(0f, 1f)
+
+        Canvas(modifier = modifier.fillMaxSize()) {
+            val canvasW = size.width
+            val canvasH = size.height
+
+            particles.forEach { particle ->
+                val currentX = (particle.startX * canvasW) + (particle.velocityX * t * (canvasW / 400f))
+                val currentY = (particle.startY * canvasH) + (particle.velocityY * t * (canvasH / 400f)) + (280f * t * t)
+                val currentRotation = particle.rotationSpeed * t
+
+                rotate(degrees = currentRotation, pivot = Offset(currentX, currentY)) {
+                    when (particle.shapeType) {
+                        0 -> {
+                            // Circular particle
+                            drawCircle(
+                                color = particle.color.copy(alpha = alpha),
+                                radius = (particle.size / 2f) * (1f - (t * 0.3f)),
+                                center = Offset(currentX, currentY)
+                            )
+                        }
+                        1 -> {
+                            // Ribbon rectangle
+                            drawRect(
+                                color = particle.color.copy(alpha = alpha),
+                                topLeft = Offset(currentX - particle.size / 2f, currentY - particle.size / 4f),
+                                size = Size(particle.size * 1.4f, particle.size * 0.6f)
+                            )
+                        }
+                        else -> {
+                            // Sparkle cross
+                            val half = particle.size * 0.7f
+                            drawLine(
+                                color = particle.color.copy(alpha = alpha),
+                                start = Offset(currentX - half, currentY),
+                                end = Offset(currentX + half, currentY),
+                                strokeWidth = 3f
+                            )
+                            drawLine(
+                                color = particle.color.copy(alpha = alpha),
+                                start = Offset(currentX, currentY - half),
+                                end = Offset(currentX, currentY + half),
+                                strokeWidth = 3f
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun ClinicianStreakSummaryCard(
     streakDays: Int,
@@ -1280,155 +1399,207 @@ fun ClinicianStreakSummaryCard(
         ?: CLINICIAN_MILESTONES.last()
 
     val previousTarget = CLINICIAN_MILESTONES.lastOrNull { it.targetDays < currentMilestone.targetDays }?.targetDays ?: 0
-    val progress = if (currentMilestone.targetDays > previousTarget) {
+    val targetProgress = if (currentMilestone.targetDays > previousTarget) {
         ((streakDays - previousTarget).toFloat() / (currentMilestone.targetDays - previousTarget).toFloat()).coerceIn(0.05f, 1.0f)
     } else 1.0f
 
     val daysRemaining = maxOf(0, currentMilestone.targetDays - streakDays)
+    val isMilestoneAchieved = daysRemaining == 0
+
+    // Smooth Compose Animated Progress Bar
+    val animatedProgress by animateFloatAsState(
+        targetValue = targetProgress,
+        animationSpec = tween(durationMillis = 1100, easing = FastOutSlowInEasing),
+        label = "streakProgressBar"
+    )
+
+    // Breathing flame pulse transition animation
+    val infiniteTransition = rememberInfiniteTransition(label = "streak_pulse_transition")
+    val flamePulseScale by infiniteTransition.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.09f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "flamePulseScale"
+    )
+
+    val borderGlowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1300, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "borderGlowAlpha"
+    )
+
+    var celebrationTrigger by remember { mutableIntStateOf(0) }
 
     Card(
         modifier = modifier
-            .shadow(3.dp, RoundedCornerShape(18.dp))
-            .clickable { onClick() }
+            .shadow(
+                elevation = if (isMilestoneAchieved) 6.dp else 3.dp,
+                shape = RoundedCornerShape(18.dp)
+            )
+            .clickable {
+                celebrationTrigger++
+                onClick()
+            }
             .testTag("clinician_streak_card"),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
-        border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.45f))
+        border = BorderStroke(
+            width = if (isMilestoneAchieved) 1.5.dp else 1.dp,
+            color = if (isMilestoneAchieved) Color(0xFFFF9800).copy(alpha = borderGlowAlpha) else Color(0xFFFFB74D).copy(alpha = 0.45f)
+        )
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp)
-        ) {
-            // Top Row: Streak Flame Badge & Target Milestone
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+        Box(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp)
             ) {
-                // Streak Flame Chip
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFFFFECB3)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Whatshot,
-                            contentDescription = "Clinician Streak Flame",
-                            tint = Color(0xFFFF6D00),
-                            modifier = Modifier.size(17.dp)
-                        )
-                        Text(
-                            text = "$streakDays-Day Practice Streak",
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 12.sp,
-                            color = Color(0xFFD84315)
-                        )
-                    }
-                }
-
-                // Milestone Badge with Chevron
+                // Top Row: Streak Flame Badge & Target Milestone
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // Streak Flame Chip with pulsing animation
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFFFECB3)
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.EmojiEvents,
-                                contentDescription = "Next Milestone Trophy",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(13.dp)
+                                imageVector = Icons.Rounded.Whatshot,
+                                contentDescription = "Clinician Streak Flame",
+                                tint = Color(0xFFFF6D00),
+                                modifier = Modifier
+                                    .size(17.dp)
+                                    .scale(flamePulseScale)
                             )
                             Text(
-                                text = "Next: ${currentMilestone.title}",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                text = "$streakDays-Day Practice Streak",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 12.sp,
+                                color = Color(0xFFD84315)
                             )
                         }
                     }
 
+                    // Milestone Badge with Chevron
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (isMilestoneAchieved) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isMilestoneAchieved) Icons.Rounded.CheckCircle else Icons.Rounded.EmojiEvents,
+                                    contentDescription = "Next Milestone Trophy",
+                                    tint = if (isMilestoneAchieved) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = if (isMilestoneAchieved) "Unlocked: ${currentMilestone.title}" else "Next: ${currentMilestone.title}",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (isMilestoneAchieved) Color(0xFF1B5E20) else MaterialTheme.colorScheme.onPrimaryContainer,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Icon(
+                            imageVector = Icons.Rounded.ChevronRight,
+                            contentDescription = "View Streak Milestones",
+                            tint = Color.Gray,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Progress Bar towards Milestone with Animated Transition
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isMilestoneAchieved) "Milestone Achieved! 🎉" else "$daysRemaining ${if (daysRemaining == 1) "day" else "days"} to unlock",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = if (isMilestoneAchieved) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "$streakDays / ${currentMilestone.targetDays} Days",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (isMilestoneAchieved) Color(0xFF2E7D32) else Color(0xFFE65100)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Animated Linear Progress
+                LinearProgressIndicator(
+                    progress = { animatedProgress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = if (isMilestoneAchieved) Color(0xFF43A047) else Color(0xFFFF8F00),
+                    trackColor = Color(0xFFFFE0B2).copy(alpha = 0.6f)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Bottom Perk Preview
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     Icon(
-                        imageVector = Icons.Rounded.ChevronRight,
-                        contentDescription = "View Streak Milestones",
-                        tint = Color.Gray,
-                        modifier = Modifier.size(18.dp)
+                        imageVector = Icons.Rounded.CardGiftcard,
+                        contentDescription = "Reward Perk",
+                        tint = Color(0xFFD84315),
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Text(
+                        text = "Reward: ${currentMilestone.rewardName}",
+                        fontSize = 11.sp,
+                        color = Color.Gray,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // Progress Bar towards Milestone
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = if (daysRemaining == 0) "Milestone Achieved! 🎉" else "$daysRemaining ${if (daysRemaining == 1) "day" else "days"} to unlock",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "$streakDays / ${currentMilestone.targetDays} Days",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFFE65100)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp)),
-                color = Color(0xFFFF8F00),
-                trackColor = Color(0xFFFFE0B2).copy(alpha = 0.6f)
+            // Celebration Particle Canvas on user tap
+            StreakMilestoneCelebrationEffect(
+                triggerKey = celebrationTrigger,
+                modifier = Modifier.matchParentSize()
             )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Bottom Perk Preview
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.CardGiftcard,
-                    contentDescription = "Reward Perk",
-                    tint = Color(0xFFD84315),
-                    modifier = Modifier.size(13.dp)
-                )
-                Text(
-                    text = "Reward: ${currentMilestone.rewardName}",
-                    fontSize = 11.sp,
-                    color = Color.Gray,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
         }
     }
 }
@@ -1438,220 +1609,260 @@ fun ClinicianStreakMilestoneDialog(
     streakDays: Int,
     onDismiss: () -> Unit
 ) {
+    var celebrationTrigger by remember { mutableIntStateOf(1) } // auto trigger on open
+    val context = LocalContext.current
+
     Dialog(onDismissRequest = onDismiss) {
         Card(
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp)
-                .shadow(12.dp, RoundedCornerShape(24.dp))
+                .padding(8.dp)
+                .shadow(14.dp, RoundedCornerShape(24.dp))
                 .testTag("clinician_streak_dialog")
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
-            ) {
-                // Header Row
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+            Box(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp)
                 ) {
+                    // Header Row
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = Color(0xFFFFECB3)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Whatshot,
-                                contentDescription = "Flame Icon",
-                                tint = Color(0xFFFF6D00),
-                                modifier = Modifier
-                                    .padding(8.dp)
-                                    .size(22.dp)
-                            )
-                        }
-                        Column {
-                            Text(
-                                text = "Practice Streaks & Perks",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 16.sp
-                            )
-                            Text(
-                                text = "Caseload Consistency Engine",
-                                fontSize = 11.sp,
-                                color = Color.Gray
-                            )
-                        }
-                    }
-
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Default.Close, contentDescription = "Close Dialog")
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Highlight Banner
-                Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFFFFF3E0),
-                    border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.5f)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "🔥 $streakDays-Day Active Practice",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 18.sp,
-                            color = Color(0xFFBF360C)
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Regular clinical documentation promotes diagnostic accuracy and protects provider focus.",
-                            fontSize = 11.sp,
-                            color = Color(0xFF5D4037),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    text = "Reward Milestone Roadmap",
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.primary
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Milestone Cards List
-                CLINICIAN_MILESTONES.forEach { milestone ->
-                    val isUnlocked = streakDays >= milestone.targetDays
-                    val isCurrent = !isUnlocked && (CLINICIAN_MILESTONES.firstOrNull { it.targetDays >= streakDays } == milestone)
-
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        shape = RoundedCornerShape(14.dp),
-                        color = when {
-                            isUnlocked -> Color(0xFFE8F5E9)
-                            isCurrent -> Color(0xFFFFF8E1)
-                            else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                        },
-                        border = BorderStroke(
-                            1.dp,
-                            when {
-                                isUnlocked -> Color(0xFF81C784)
-                                isCurrent -> Color(0xFFFFB74D)
-                                else -> Color.Transparent
-                            }
-                        )
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(10.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Surface(
                                 shape = CircleShape,
-                                color = when {
-                                    isUnlocked -> Color(0xFFC8E6C9)
-                                    isCurrent -> Color(0xFFFFE082)
-                                    else -> Color.LightGray.copy(alpha = 0.5f)
-                                }
+                                color = Color(0xFFFFECB3)
                             ) {
                                 Icon(
-                                    imageVector = milestone.icon,
-                                    contentDescription = milestone.title,
+                                    imageVector = Icons.Rounded.Whatshot,
+                                    contentDescription = "Flame Icon",
+                                    tint = Color(0xFFFF6D00),
                                     modifier = Modifier
-                                        .padding(7.dp)
-                                        .size(18.dp),
-                                    tint = when {
-                                        isUnlocked -> Color(0xFF2E7D32)
-                                        isCurrent -> Color(0xFFE65100)
-                                        else -> Color.Gray
-                                    }
+                                        .padding(8.dp)
+                                        .size(22.dp)
                                 )
                             }
-
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "${milestone.targetDays} Days • ${milestone.title}",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 12.sp,
-                                        color = if (isUnlocked) Color(0xFF1B5E20) else MaterialTheme.colorScheme.onSurface
-                                    )
-
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = when {
-                                            isUnlocked -> Color(0xFF2E7D32)
-                                            isCurrent -> Color(0xFFEF6C00)
-                                            else -> Color.Gray.copy(alpha = 0.3f)
-                                        }
-                                    ) {
-                                        Text(
-                                            text = when {
-                                                isUnlocked -> "Unlocked ✓"
-                                                isCurrent -> "$streakDays/${milestone.targetDays}d"
-                                                else -> "Locked"
-                                            },
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isUnlocked || isCurrent) Color.White else Color.DarkGray,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(2.dp))
+                            Column {
                                 Text(
-                                    text = "Perk: ${milestone.rewardName}",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = if (isUnlocked) Color(0xFF2E7D32) else Color(0xFFD84315)
+                                    text = "Practice Streaks & Perks",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 16.sp
                                 )
                                 Text(
-                                    text = milestone.description,
-                                    fontSize = 10.sp,
+                                    text = "Caseload Consistency Engine",
+                                    fontSize = 11.sp,
                                     color = Color.Gray
                                 )
                             }
                         }
+
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, contentDescription = "Close Dialog")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Highlight Banner with spring scale entrance
+                    AnimatedVisibility(
+                        visible = true,
+                        enter = scaleIn(spring(dampingRatio = Spring.DampingRatioMediumBouncy)) + fadeIn()
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = Color(0xFFFFF3E0),
+                            border = BorderStroke(1.dp, Color(0xFFFFB74D).copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "🔥 $streakDays-Day Active Practice",
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 18.sp,
+                                    color = Color(0xFFBF360C)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Consistent documentation protects clinical accuracy and unlocks practitioner productivity perks.",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF5D4037),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Reward Milestone Roadmap",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        TextButton(
+                            onClick = {
+                                celebrationTrigger++
+                                Toast.makeText(context, "🎉 Sparkles activated! Keep up the dedication.", Toast.LENGTH_SHORT).show()
+                            },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Icon(Icons.Rounded.AutoAwesome, contentDescription = "Sparkle celebration", modifier = Modifier.size(14.dp), tint = Color(0xFFFF8F00))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("Celebrate", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF8F00))
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Milestone Cards List with animated state
+                    CLINICIAN_MILESTONES.forEach { milestone ->
+                        val isUnlocked = streakDays >= milestone.targetDays
+                        val isCurrent = !isUnlocked && (CLINICIAN_MILESTONES.firstOrNull { it.targetDays >= streakDays } == milestone)
+
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            color = when {
+                                isUnlocked -> Color(0xFFE8F5E9)
+                                isCurrent -> Color(0xFFFFF8E1)
+                                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                            },
+                            border = BorderStroke(
+                                1.dp,
+                                when {
+                                    isUnlocked -> Color(0xFF81C784)
+                                    isCurrent -> Color(0xFFFFB74D)
+                                    else -> Color.Transparent
+                                }
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = when {
+                                        isUnlocked -> Color(0xFFC8E6C9)
+                                        isCurrent -> Color(0xFFFFE082)
+                                        else -> Color.LightGray.copy(alpha = 0.5f)
+                                    }
+                                ) {
+                                    Icon(
+                                        imageVector = milestone.icon,
+                                        contentDescription = milestone.title,
+                                        modifier = Modifier
+                                            .padding(7.dp)
+                                            .size(18.dp),
+                                        tint = when {
+                                            isUnlocked -> Color(0xFF2E7D32)
+                                            isCurrent -> Color(0xFFE65100)
+                                            else -> Color.Gray
+                                        }
+                                    )
+                                }
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "${milestone.targetDays} Days • ${milestone.title}",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 12.sp,
+                                            color = if (isUnlocked) Color(0xFF1B5E20) else MaterialTheme.colorScheme.onSurface
+                                        )
+
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = when {
+                                                isUnlocked -> Color(0xFF2E7D32)
+                                                isCurrent -> Color(0xFFEF6C00)
+                                                else -> Color.Gray.copy(alpha = 0.3f)
+                                            }
+                                        ) {
+                                            Text(
+                                                text = when {
+                                                    isUnlocked -> "Unlocked ✓"
+                                                    isCurrent -> "$streakDays/${milestone.targetDays}d"
+                                                    else -> "Locked"
+                                                },
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isUnlocked || isCurrent) Color.White else Color.DarkGray,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "Perk: ${milestone.rewardName}",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (isUnlocked) Color(0xFF2E7D32) else Color(0xFFD84315)
+                                    )
+                                    Text(
+                                        text = milestone.description,
+                                        fontSize = 10.sp,
+                                        color = Color.Gray
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Button(
+                        onClick = {
+                            celebrationTrigger++
+                            Toast.makeText(context, "🌟 Milestone progress synced!", Toast.LENGTH_SHORT).show()
+                            onDismiss()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        shape = RoundedCornerShape(22.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Icon(Icons.Rounded.Whatshot, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Keep Streak Alive", fontWeight = FontWeight.Bold)
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Button(
-                    onClick = onDismiss,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(44.dp),
-                    shape = RoundedCornerShape(22.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Text("Keep Streak Alive", fontWeight = FontWeight.Bold)
-                }
+                // Confetti particle canvas overlay
+                StreakMilestoneCelebrationEffect(
+                    triggerKey = celebrationTrigger,
+                    modifier = Modifier.matchParentSize()
+                )
             }
         }
     }
