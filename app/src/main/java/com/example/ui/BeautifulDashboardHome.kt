@@ -1981,61 +1981,28 @@ fun RechartsTrendLineGraph(
     var chartFilterMode by remember { mutableStateOf("Dual Alignment") } // "Dual Alignment", "Mood Curve", "Sleep Line"
     val context = LocalContext.current
     
-    val calendarList = listOf(
-        "Mon" to 15,
-        "Tue" to 16,
-        "Wed" to 17,
-        "Thu" to 18,
-        "Fri" to 19,
-        "Sat" to 20,
-        "Sun" to 21
-    )
-
     val trendPoints = remember(personalEntries) {
-        calendarList.map { (dayName, dateNum) ->
+        val dayFormat = SimpleDateFormat("EEE", Locale.getDefault())
+        (6 downTo 0).map { daysAgo ->
+            val c = Calendar.getInstance().apply {
+                add(Calendar.DAY_OF_YEAR, -daysAgo)
+            }
+            val targetYear = c.get(Calendar.YEAR)
+            val targetDayOfYear = c.get(Calendar.DAY_OF_YEAR)
+            val dayName = dayFormat.format(c.time)
+            val dateNum = c.get(Calendar.DAY_OF_MONTH)
+
             val matchingEntry = personalEntries.find { entry ->
                 val ec = Calendar.getInstance().apply { timeInMillis = entry.dateMillis }
-                ec.get(Calendar.YEAR) == 2026 &&
-                        ec.get(Calendar.MONTH) == Calendar.JUNE &&
-                        ec.get(Calendar.DAY_OF_MONTH) == dateNum
-            }
-            
-            // Fallback interpolated values for standard demo visual layout continuity
-            val fallbackMood = when(dateNum) {
-                15 -> 7.0f
-                16 -> 5.0f
-                17 -> 8.0f
-                18 -> 4.0f
-                19 -> 9.0f
-                20 -> 8.0f
-                else -> 7.0f
-            }
-            val fallbackMoodName = when(fallbackMood.toInt()) {
-                10 -> "Happy"
-                9 -> "Productive"
-                8 -> "Calm"
-                7 -> "Reflective"
-                5 -> "Neutral"
-                4 -> "Anxious"
-                else -> "Overwhelmed"
-            }
-            
-            val fallbackSleep = when(dateNum) {
-                15 -> 6f
-                16 -> 5f
-                17 -> 7f
-                18 -> 4f
-                19 -> 8f
-                20 -> 8f
-                else -> 7f
+                ec.get(Calendar.YEAR) == targetYear && ec.get(Calendar.DAY_OF_YEAR) == targetDayOfYear
             }
 
             TrendPoint(
                 dayName = dayName,
                 dateNum = dateNum,
-                moodName = matchingEntry?.mood ?: fallbackMoodName,
-                moodValue = matchingEntry?.moodWeight?.toFloat() ?: fallbackMood,
-                sleepValue = matchingEntry?.sleepQuality?.toFloat() ?: fallbackSleep,
+                moodName = matchingEntry?.mood ?: if (personalEntries.isEmpty()) "—" else "No Entry",
+                moodValue = matchingEntry?.moodWeight?.toFloat() ?: 5.0f,
+                sleepValue = matchingEntry?.sleepQuality?.toFloat() ?: 5.0f,
                 entry = matchingEntry
             )
         }

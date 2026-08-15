@@ -363,12 +363,27 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
                     selectedMode = null,
                     onboardingCompleted = false,
                     pinLockEnabled = false,
-                    pinCode = ""
+                    pinCode = "",
+                    biometricLockEnabled = false,
+                    journalBiometricLocked = false,
+                    clientDataBiometricLocked = false,
+                    maskClientNames = false,
+                    obfuscateContacts = false,
+                    blurClinicalNotes = false,
+                    lastAIResponseSummary = "",
+                    lastAIResponseDate = 0,
+                    selectedTheme = "Natural Tones",
+                    selectedAccent = "Sage",
+                    isDarkMode = false,
+                    cloudSyncEnabled = false,
+                    syncedUserEmail = ""
                 )
             }
-            repository.clearClinicalSandbox()
+            repository.clearAllUserData()
             _isAppLocked.value = false
             _panicModeActivated.value = false
+            _isJournalUnlocked.value = false
+            _isClientDataUnlocked.value = false
             _currentPatientId.value = null
             _currentAIWeeklySummary.value = ""
             _currentClinicalBrief.value = ""
@@ -655,14 +670,35 @@ class ClientFlowViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // DEV DATA MANAGEMENT CONTROLS
-    fun loadClinicalSandboxDemo() {
-        wipeClinicalSandbox()
+    // PRODUCTION DATA MANAGEMENT CONTROLS
+    fun wipeClinicalData() {
+        viewModelScope.launch {
+            repository.clearClinicalSandbox()
+            _currentPatientId.value = null
+            _currentClinicalBrief.value = ""
+            triggerFirestoreSync()
+        }
+    }
+
+    fun wipeJournalData() {
+        viewModelScope.launch {
+            repository.clearAllPersonalEntries()
+            _currentAIWeeklySummary.value = ""
+            triggerFirestoreSync()
+        }
+    }
+
+    fun wipeAllUserData() {
+        viewModelScope.launch {
+            repository.clearAllUserData()
+            _currentPatientId.value = null
+            _currentAIWeeklySummary.value = ""
+            _currentClinicalBrief.value = ""
+            triggerFirestoreSync()
+        }
     }
 
     fun wipeClinicalSandbox() {
-        viewModelScope.launch {
-            repository.clearClinicalSandbox()
-        }
+        wipeClinicalData()
     }
 }

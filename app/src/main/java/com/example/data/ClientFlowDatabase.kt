@@ -143,6 +143,9 @@ interface PersonalJournalEntryDao {
 
     @Delete
     suspend fun deleteEntry(entry: PersonalJournalEntry)
+
+    @Query("DELETE FROM personal_journal_entries")
+    suspend fun clearAllEntries()
 }
 
 @Dao
@@ -203,6 +206,9 @@ interface ScheduledItemDao {
 
     @Query("DELETE FROM scheduled_items WHERE id = :id")
     suspend fun deleteScheduleById(id: Int)
+
+    @Query("DELETE FROM scheduled_items")
+    suspend fun clearAllSchedules()
 }
 
 // ==========================================
@@ -301,5 +307,20 @@ class ClientFlowRepository(private val db: ClientFlowDatabase) {
     suspend fun clearClinicalSandbox() {
         db.patientDao().clearAllPatients()
         db.clinicalSessionLogDao().clearAllSessions()
+    }
+
+    suspend fun clearAllPersonalEntries() {
+        db.personalJournalEntryDao().clearAllEntries()
+    }
+
+    suspend fun clearAllSchedules() {
+        db.scheduledItemDao().clearAllSchedules()
+    }
+
+    suspend fun clearAllUserData() {
+        db.patientDao().clearAllPatients()
+        db.clinicalSessionLogDao().clearAllSessions()
+        db.personalJournalEntryDao().clearAllEntries()
+        db.scheduledItemDao().clearAllSchedules()
     }
 }
